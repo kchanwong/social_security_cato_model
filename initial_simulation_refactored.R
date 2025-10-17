@@ -15,209 +15,14 @@ set.seed(2025)
 load("C:/Users/UmanaAhmed/Downloads/init_sim_data.RData")
 potential_ids <- sprintf("%08d", sample(1000000:9999999, 5000000))  # 10,000 candidates
 
-# load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_population.Rdata")
-# load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_fertility.Rdata")
-# load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_mortality.Rdata")
-# load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_immigration.RData")
-# load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/ocact_assumptions.RData")
-# 
-# ## MAX_INCOME --------------------
-# 
-# max_inc_path <- "C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/df_max_income_1993.csv"
-# 
-# # Static max income from 1951-1971
-# MAX_INCOME <- data.frame(
-#   REFYEAR = 1951:1971,
-#   MAX_INCOME = c(
-#     rep(3600, 4), # 1951-1954
-#     rep(4200, 4), # 1955-1958
-#     rep(4800, 7), # 1959-1965
-#     rep(6600, 2), # 1966-1967
-#     rep(7800, 4)) # 1968-1971
-# ) %>%
-# 
-# # Max income from 1971-1993 (from CSV)
-#   add_row(
-#     read.csv(max_inc_path) %>% mutate(MAX_INCOME = as.integer(MAX_INCOME))
-#   ) %>%
-# 
-# # Max income from 1994 onward (calculate from AWI)
-#   add_row(
-#     df_econ_assumptions %>%
-#       filter(REFYEAR > 1994,
-#              ALTERNATIVE %in% c(0, 2)) %>%
-#       mutate(
-#         BASE = lag(AWI, 2),
-#         YEAR = lag(REFYEAR, 2),
-#         BASE_CONTRIB = 300 * round((1/300) * ((lag(AWI, 2) * 60600)/22935.42)) # Formula
-#       ) %>%
-#       select(REFYEAR, MAX_INCOME = BASE_CONTRIB)
-#   ) %>%
-#   na.omit()
-# 
-# ## RESHAPING LABOR FORCE PARTICIPATION --------------------
-# 
-# LFPR_path <- "C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/labor_force_participation_rate.csv"
-# LFPR_raw <- read.csv(LFPR_path) %>%
-#   pivot_longer(
-#     cols = -c(Year, Sex),
-#     names_to = "AgeRange",
-#     values_to = "Value"
-#   )
-# 
-# # Clean AgeRange column names
-# LFPR_clean <- LFPR_raw %>% mutate(
-#   AgeRange = str_remove(AgeRange, "^X"),
-#   AgeRange = str_replace_all(AgeRange, "\\.", "-")
-# )
-# 
-# # Expand age ranges to individual years
-# LFPR_expanded <- LFPR_clean %>%
-#   mutate(
-#     AgeRange = case_when(
-#       AgeRange == '16-17' ~ list(16:17),
-#       AgeRange == '18-19' ~ list(18:19),
-#       AgeRange == '20-24' ~ list(20:24),
-#       AgeRange == '25-29' ~ list(25:29),
-#       AgeRange == '30-34' ~ list(30:34),
-#       AgeRange == '35-39' ~ list(35:39),
-#       AgeRange == '40-44' ~ list(40:44),
-#       AgeRange == '45-49' ~ list(45:49),
-#       AgeRange == '50-54' ~ list(50:54),
-#       AgeRange == '55-59' ~ list(55:59),
-#       AgeRange == '60-64' ~ list(60:64),
-#       AgeRange == '65-69' ~ list(65:69),
-#       AgeRange == '70' ~ list(70:100)
-#   )) %>%
-#   unnest(AgeRange)
-# 
-# # Extend to years 2097-2100 by copying 2096 data
-# LFPR_expanded <- LFPR_expanded %>%
-#   add_row(
-#     LFPR_expanded %>%
-#       filter(Year == 2096) %>%
-#       mutate(Year = list(2097:2100)) %>%
-#       unnest(Year)
-#   )
-# 
-# ## PROJECTING FERTILITY RATES --------------------
-# 
-# fert_path <- "C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/child_birth_w_order.csv"
-# 
-# dfFert06_08 <- read.csv(fert_path) %>%
-#   rename(YEAR = year,
-#          AGE = age,
-#          FERT_RATE = Total) %>%
-#   mutate(FERT_PER_CAPITA = FERT_RATE / 1000) %>%
-#   select(YEAR, AGE, FERT_PER_CAPITA)
-# 
-# # Forecast fertility from 2010-2100 using 2009 fertility proportions
-# 
-# # Get fertility share by age group in 2009
-# dfFert06_08 <- dfFert06_08 %>%
-#   filter(YEAR == 2009) %>%
-#   inner_join(df_pop_ssa %>%
-#                rename(YEAR = year,
-#                       AGE = age) %>%
-#                select(YEAR, AGE, f_tot),
-#              by = c('YEAR', 'AGE')) %>%
-#   mutate(NO_KIDS = FERT_PER_CAPITA * f_tot) %>%
-#   group_by(YEAR) %>%
-#   mutate(PERC_KIDS = FERT_PER_CAPITA / sum(FERT_PER_CAPITA)) %>%
-#                                        ungroup()
-# 
-# # Project fertility to future years using 2009 proportions
-# fert_future <- dfFert06_08 %>%
-#   mutate(YEAR = list(2010:2100)) %>%
-#   unnest(YEAR) %>%
-#   arrange(YEAR)
-# 
-# # Estimate future number of babies by age group
-# fert_future <- fert_future %>%
-#   # add total number of babies born in each year
-#   inner_join(
-#     df_pop_ssa %>%
-#       filter(age == 0) %>%
-#       select(YEAR = year,
-#              TOTAL_BABIES = total),
-#     by = "YEAR"
-#   ) %>%
-#   mutate(
-#     NO_BABIES = TOTAL_BABIES * PERC_KIDS
-#   )
-# 
-# # Merge with age-specific population data to get fertility rate
-# fert_future <- fert_future %>%
-#   inner_join(
-#     df_pop_ssa %>%
-#       select(YEAR = year, AGE = age, TOTAL_PEOPLE = f_tot),
-#     by = c("YEAR", "AGE")
-#   ) %>%
-#   mutate(
-#     FERT_PER_CAPITA = NO_BABIES / TOTAL_PEOPLE
-#   ) %>%
-#   select(YEAR, AGE, FERT_PER_CAPITA)
-# 
-# # Combine observed and forecasted fertility data
-# df_fertility_all <- add_row(df_fertility_obs, fert_future)
-# 
-# ## LABOR FORCE TRANSITION PROBABILITIES --------------------
-# 
-# dfInitSamps <- readRDS("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/projected_2007_1.rds") %>%
-#   mutate(
-#     SEX = as.integer(as_factor(SEX)),
-#     SERIAL = str_pad(as.character(SERIAL),
-#                      width = 7, pad = '0'),
-#     # Assume non-zero income implies labor force participation
-#     LABFORCE = ifelse(INCWAGE != 0, 1, 0)
-#   )
-# 
-# # Add the current year the person lives in
-# cohort_life_tables <- cohort_life_tables %>%
-#   mutate(YEAR_LIVING = year + age)
-# 
-# 
-# transition <- read_csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/transition_matrix.csv")
-# 
-# # Extend 2024 transition probabilities forward to 2025-2100
-# transition <- transition %>% add_row(
-#   transition %>% filter(YEAR == 2024) %>%
-#     mutate(YEAR = list(2025:2100)) %>%
-#     unnest(YEAR)
-# )
-# 
-# # Reshape transition matrix - create two rows for each year-sex-age combo:
-#   # One for those not in labor force (NILF), one for in labor force (ILF)
-# transition <- transition %>%
-#   select(YEAR, SEX, AGE, PROB_EXIT_LF = NILF_TO_NILF) %>%
-#   mutate(LABFORCE = 0, END = 0) %>%
-#   ungroup() %>%
-#   add_row(
-#     transition %>%
-#       select(YEAR, SEX, PROB_EXIT_LF = ILF_TO_NILF) %>%
-#       mutate(LABFORCE = 1, END = 0)
-#   ) %>%
-#   arrange(YEAR, AGE, LABFORCE)
-# 
-# # For age > 70:
-#   # NILF individuals stay out of LF (prob = 1)
-#   # ILF individuals have 50% chance of leaving LF
-# transition <- transition %>%
-#   mutate(PROB_EXIT_LF = case_when(
-#     LABFORCE == 0 & AGE > 70 ~ 1.0,
-#     LABFORCE == 1 & AGE > 70 ~ 0.5,
-#     TRUE ~ PROB_EXIT_LF)
-#   )
-# 
-# # Check for duplicate entries
-# transition %>%
-#   group_by(YEAR, SEX, AGE, LABFORCE, END) %>%
-#   summarise(COUNT = n(), .groups = "drop") %>%
-#   filter(COUNT != 1)
-
 ## MORTALITY AND NEW HOUSEHOLDS -------------------- 
 
-# ** DESCRIBE FUNCTION
+# Simulates one year of demographic changes for a sample population -
+# Given current year (YEAR_NOW) and an initial sample dataframe (dfInitSamps)
+# Applies mortality rates, removes deceased, updates ages/marital status
+# (including widows), removes deceased, assigns new household IDS to
+# newly independent 18-year-olds; returns updated population
+
 makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
 
 # Life table data for the current year
@@ -234,7 +39,7 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
         mutate(SEX = 2)
     )
   
-# Assign deaths to people of the same sex and cohort
+# Randomly assign deaths to people of the same sex and cohort
   dfDeaths <- dfInitSamps %>% 
     group_by(AGE, SEX) %>%
     summarise(COUNT = n()) %>%
@@ -247,7 +52,6 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
 # Detect dead IDs
   id_dead <- c()
   
-  id_dead <- c()
   for(i in 1:nrow(dfDeaths)){
     id_dead <- c(id_dead,
                  dfInitSamps[which(dfInitSamps$AGE == dfDeaths$AGE[i] 
@@ -322,8 +126,13 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
 
 ## SIMULATE BIRTHS BASED ON FERTILITY RATES --------------------
 
-# ** DESCRIBE FUNCTION
+# Simulates births for the current year based on age-specific fertility rates.
+# Given the current year (YEAR_NOW) and an updated population dataframe (dfInitSamp_new_units)
+# Identifies fertile women, assigns births by probability using fertility data
+# Generates baby records with demographic attributes/unique IDs, returns updated pop.
+
 makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
+  
   # Identify women; fertility data for a given year
   females <- dfInitSamp_new_units %>% 
     filter(SEX == 2)
@@ -403,7 +212,12 @@ makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
   
 ## MARRIAGE AND DIVORCE --------------------   
 
-# ** DESCRIBE FUNCTION
+# Simulates marriage and divorce for the current year 
+# Given current year (YEAR_NOW) and population dataframe after births (dfInitSamps_babies)
+# Matches eligible men and women into marriages based on age and income similarity
+# Updates marital and household statuses, applies age-based divorce rates
+# Returns updated population with new marital statuses
+
 makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
   
 # Estimate the men who will be married in year t+1 
@@ -608,7 +422,12 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
 
 ## INCOME GROWTH AND LABOR FORCE --------------------
 
-# ** DESCRIBE FUNCTION
+# Simulates labor force participation, disability, and income dynamics for current year
+# Given the year (YEAR_NOW) and post-divorce population (dfInitSamp_divorced)
+# Updates individual labor force participation status based on transition probability
+# Aligns LF participation rates w/ SSA targets, assigns disability randomly
+# Imputes wages for new or re-employed workers, gives updated pop. dataset
+
 makeIncome_and_LF_and_Disability <- function(YEAR_NOW, dfInitSamp_divorced) {
   
   dfInitSamp_LAB_FORCE_transition <- dfInitSamp_divorced %>%
@@ -829,7 +648,6 @@ DISTRIBUTION <- income_dist %>%
     MAX_TO = ifelse(Income_Bracket == "Max", Inf, MAX_TO)
   ) %>%
   
-  # **??
   # MIN_TO shifts down, makes each MIN_TO equal to prev. row's MAX_TO
   mutate(MIN_TO = lag(MAX_TO),
          MIN_TO = ifelse(is.na(MIN_TO) | is.infinite(MIN_TO), 0, MIN_TO),
@@ -909,7 +727,11 @@ Make_Year_Distribution <- function(YEAR) {
   INCOMES
 }
 
-# Creating income dist. for a given year using generated distribution, matches to sample
+# Aligns income distribution in a given year with a target distribution
+# For specific year, constructs capped income distribution (based on MAX_INCOME)
+# Matches individuals' income percentiles to target
+# Returns updated dataset where incomes are adjusted to reflect target distribution
+
 matchDist <- function(year) {
   
   # Make target distribution
@@ -927,13 +749,13 @@ matchDist <- function(year) {
     mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX, MAX, INCWAGE),
     
     # Total income retained after capping
-    PERC_TOTAL = sum(INCWAGE_NEW) / sum(INCWAGE), 
+           PERC_TOTAL = sum(INCWAGE_NEW) / sum(INCWAGE), 
     
     # Cumulative income share
-    PERC = cumsum(INCWAGE) / sum(INCWAGE), 
+           PERC = cumsum(INCWAGE) / sum(INCWAGE), 
     
     # Rank-based percentile position
-    percentile = (row_number() - 0.5) / n())
+           percentile = (row_number() - 0.5) / n())
   
   # Filter for target year, compute percentile for everyone w non-zero income
   future_dist <- samps %>%
@@ -943,8 +765,7 @@ matchDist <- function(year) {
     mutate(percentile = (row_number() - 0.5) / n())
   
   
-  # Match percentiles between distributions - 
-    # ** Don't fully understand what's going on here
+  # Match percentiles between distributions 
   suppressWarnings(future_dist <- future_dist %>%
                      mutate(matched_PERC = approx(
                        x = target_dist$percentile,
@@ -981,27 +802,41 @@ filtered_econ_assumptions <- df_econ_assumptions %>%
   select(YEAR = REFYEAR, AWI) %>%
   na.omit()
 
+# 
 target_adjusted <- target %>%
   group_by(YEAR) %>%
   summarise(MEAN = mean(INCWAGE)) %>%
   inner_join(filtered_econ_assumptions) %>%
-  mutate(AWI_ADJUST = 1 + ((AWI - 40405.48) / 40405.48)) %>% # Hardcoded values?
+  
+  # Adjusting AWI 
+  mutate(AWI_ADJUST = 1 + ((AWI - 40405.48) / 40405.48)) %>%
   select(YEAR, AWI_ADJUST)
 
 samps <- target %>%
-  inner_join(target_adjusted, by = 'YEAR') %>%
+  inner_join(target_adjusted, 
+             by = 'YEAR') %>%
   mutate(INCWAGE = INCWAGE) %>%
   select(-AWI_ADJUST)
 
+# Build population tables by sex and marital status
+
+# Married men
 pop_ssa_adjusted_1 <- df_pop_ssa %>%
   select(year, age, m_mar) %>%
   rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
   mutate(MARST = 1, SEX = 1)
 
+# Married women
 pop_ssa_adjusted_2 <- df_pop_ssa %>%
   select(year, age, m_mar) %>%
   rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
   mutate(MARST = 1, SEX = 2)
+
+# Unmarried women
+pop_ssa_adjusted_3 <- df_pop_ssa %>%
+  select(year, age, m_mar) %>%
+  rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
+  mutate(MARST = 0, SEX = 2)
 
 pop_ssa_grouped <- df_pop_ssa %>%
   group_by(year) %>%
@@ -1022,7 +857,7 @@ econ_assumptions_filter <- df_econ_assumptions %>%
   select(YEAR = REFYEAR, AWI) %>%
   na.omit()
 
-# 
+# Calculate weights of each sample pop in the real population
 weights <- df_pop_ssa %>%
   mutate(m_not_married = m_tot - m_mar) %>%
   select(year, age, m_not_married) %>%
@@ -1031,9 +866,9 @@ weights <- df_pop_ssa %>%
          TOTAL_SSA = m_not_married) %>%
   mutate(MARST = 0,
          SEX = 1) %>%
-  add_row(pop_ssa_adjusted_1,
-          pop_ssa_adjusted_2,
-          .name_repair = "unique") %>%
+  rows_append(pop_ssa_adjusted_1) %>%
+  rows_append(pop_ssa_adjusted_2) %>%
+  rows_append(pop_ssa_adjusted_3) %>%
   inner_join(pop_ssa_grouped) %>%
   mutate(PERC_SSA = TOTAL_SSA / TOTAL_POP) %>%
   inner_join(samps_grouped) %>%
@@ -1041,7 +876,8 @@ weights <- df_pop_ssa %>%
   inner_join(samps_filtered) %>%
   mutate(WEIGHTS = SAMPS_POP/COUNT)
 
-samp_w_weights <- samps %>%
+# Joining weights back into dataset
+samps_w_weights <- samps %>%
   filter(AGE < 100) %>%
   inner_join(weights, 
              by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
@@ -1068,14 +904,18 @@ econ_assumptions_filtered <- df_econ_assumptions %>%
   select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
   na.omit()
 
-samp_w_weights %>% 
+samps_w_weights <- samps_w_weights %>% 
   mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE),
          INCWAGE = INCWAGE) %>%
   inner_join(MAX_INCOME %>% rename(YEAR = REFYEAR)) %>%
+  
+  # Caps incomes at MAX_INCOME (yearly maximum taxable)
   mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME,
                               MAX_INCOME,
                               INCWAGE)) %>%
   group_by(YEAR) %>%
+  
+  # Compute summary statistics 
   summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
             MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0]),
             LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
@@ -1083,148 +923,10 @@ samp_w_weights %>%
   inner_join(pop_ssa_grouped) %>%
   mutate(TOTAL = (1/1e9) * TOTAL_PAYROLL * (TOTAL/N)) %>%
   inner_join(econ_assumptions_filtered) %>%
+  
+  # Calculate percent difference between model's total taxable payroll and SSA's 
   mutate(PERC_DIFF = (TAXABLE_PAYROLL - TOTAL) / TOTAL) %>%
   print(n = 100)
            
 samps_w_weights %>%
-  write_rds("C:/Users/kchanwong/OneDrive - Cato Institute/Documents/social_security/stand_together_reforms/simulation.RDS")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
--------------------------------------------------------
--------------------------------------------------------
-
-###
-
-target <- matchDist(2007)
-for(i in 2008:2100){
-  print(i)
-  target <- target %>% add_row(matchDist(i))}
-samps <- target %>%
-  inner_join(
-    target %>%
-      group_by(YEAR) %>%
-      summarise(MEAN = mean(INCWAGE)) %>%
-      inner_join(
-        df_econ_assumptions %>%
-          filter(ALTERNATIVE %in% c(0,2)) %>%
-          select(YEAR = REFYEAR, AWI) %>%
-          na.omit()
-      ) %>%
-      mutate(AWI_ADJUST = 1 + ((AWI - 40405.48)/40405.48)) %>%
-      select(YEAR, AWI_ADJUST),
-    by = 'YEAR'
-  ) %>%
-  mutate(INCWAGE = INCWAGE) %>%
-  select(-AWI_ADJUST)
-weights <- df_pop_ssa %>%
-  mutate(m_not_married = m_tot - m_mar ) %>%
-  select(year, age, m_not_married) %>%
-  rename(YEAR = year, AGE = age, TOTAL_SSA = m_not_married) %>%
-  mutate(MARST = 0, SEX = 1) %>%
-  add_row(
-    df_pop_ssa %>%
-      select(year, age, m_mar) %>%
-      rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
-      mutate(MARST = 1, SEX = 1)
-  ) %>%
-  add_row(
-    df_pop_ssa %>%
-      select(year, age, f_mar) %>%
-      rename(YEAR = year, AGE = age, TOTAL_SSA = f_mar) %>%
-      mutate(MARST = 1, SEX = 2)
-  ) %>%
-  add_row(
-    df_pop_ssa %>%
-      mutate(f_not_married = f_tot - f_mar) %>%
-      select(year, age, f_not_married) %>%
-      rename(YEAR = year, AGE = age, TOTAL_SSA = f_not_married) %>%
-      mutate(MARST = 0, SEX = 2)) %>%
-  inner_join(
-    df_pop_ssa %>%
-      group_by(year) %>%
-      summarise(TOTAL_POP = sum(total)) %>%
-      rename(YEAR = year)
-  ) %>%
-  mutate(PERC_SSA = TOTAL_SSA/TOTAL_POP) %>%
-  inner_join(
-    samps %>%
-      group_by(YEAR) %>%
-      summarise(PEOPLE = n())
-  ) %>%
-  mutate(SAMPS_POP = PERC_SSA * PEOPLE) %>%
-  inner_join(
-    samps %>%
-      filter(AGE < 100) %>%
-      group_by(YEAR, AGE, MARST, SEX) %>%
-      summarise(COUNT = n())
-  ) %>%
-  mutate(WEIGHTS = SAMPS_POP/COUNT)
-
-samps_w_weights <- samps %>%
-  filter(AGE < 100) %>%
-  inner_join(weights, by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
-  group_by(YEAR) %>%
-  mutate(MEAN_INCOME = mean(INCWAGE)) %>%
-  inner_join(
-    df_econ_assumptions %>%
-      filter(ALTERNATIVE %in% c(0,2)) %>%
-      select(YEAR = REFYEAR, AWI) %>%
-      na.omit()
-  ) %>%
-  select(-TOTAL_SSA, -TOTAL_POP, -DISABWRK_PERC, -PERC_SSA, -PEOPLE, -SAMPS_POP, -COUNT,
-         -MEAN_INCOME, -AWI)
-samps_w_weights %>%
-  mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
-  mutate(INCWAGE = INCWAGE) %>%
-  inner_join(MAX_INCOME %>% rename(YEAR = REFYEAR)) %>%
-  mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME, MAX_INCOME, INCWAGE)) %>%
-  group_by(YEAR) %>%
-  summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
-            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0] ),
-            LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
-            N = n()) %>%
-  inner_join(
-    df_pop_ssa %>%
-      group_by(year) %>%
-      summarise(TOTAL = sum(total)) %>%
-      rename(YEAR = year)
-  ) %>%
-  mutate(TOTAL = (1/1e9) * TOTAL_PAYROLL * (TOTAL/N)) %>%
-  inner_join(
-    df_econ_assumptions %>%
-      filter(ALTERNATIVE %in% c(0,2)) %>%
-      select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
-      na.omit()
-  ) %>%
-  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL)/TOTAL) %>%
-  print(n = 100)
-samps_w_weights %>%
   write_rds("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/initial_simulation.rds")
-
-# View(initial_simulation_rds)
-
-                              
-
-
-
-
