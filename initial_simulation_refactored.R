@@ -8,9 +8,7 @@ library(readr)
 library(purrr)
 library(survey)
 library(forecast)
-
 set.seed(2025)
-
 ## LOAD DATA --------------------
 load("C:/Users/UmanaAhmed/Downloads/init_sim_data.RData")
 potential_ids <- sprintf("%08d", sample(1000000:9999999, 5000000))  # 10,000 candidates
@@ -565,9 +563,9 @@ makeIncome_and_LF_and_Disability <- function(YEAR_NOW, dfInitSamp_divorced) {
       filter(AGE == counts$AGE[i]) %>%
       mutate(INCWAGE = as.integer(INCWAGE)) %>%
       
-      # ** ask about this bit
       # Randomly sample n wages equal to the number of people with zero income
       # Append the sampled values
+      # For people who are newly employed, assign random income from 2007 initial income based on age
       slice_sample(n = counts$COUNT[i], replace = TRUE) %>%
       pull(INCWAGE)
     
@@ -658,7 +656,6 @@ DISTRIBUTION <- income_dist %>%
   mutate(MAX_TO = ifelse(MAX_TO > MAX_INCOME, MAX_INCOME, MAX_TO),
          MIN_TO = ifelse(MIN_TO > MAX_INCOME, MAX_INCOME, MIN_TO)) %>%
   
-  # ** Figure out what this part is doing??
   mutate(EXPECTED = (MIN_TO + MAX_TO)/2,
          EXPECTED = ifelse(Income_Bracket == 'Max', 2.5 * MAX_INCOME, EXPECTED),
          PERC_MAX = ifelse(Income_Bracket == 'Max', MAX_INCOME, EXPECTED),
@@ -802,131 +799,127 @@ filtered_econ_assumptions <- df_econ_assumptions %>%
   select(YEAR = REFYEAR, AWI) %>%
   na.omit()
 
-# 
+# Produces table of YEAR and AWI_ADJUST
 target_adjusted <- target %>%
   group_by(YEAR) %>%
   summarise(MEAN = mean(INCWAGE)) %>%
   inner_join(filtered_econ_assumptions) %>%
   
-  # Adjusting AWI 
+  # Adjusting AWI - calculating percent difference from base year (2007)
   mutate(AWI_ADJUST = 1 + ((AWI - 40405.48) / 40405.48)) %>%
   select(YEAR, AWI_ADJUST)
 
+# Target data limited to years that exist in target_adjusted
 samps <- target %>%
   inner_join(target_adjusted, 
              by = 'YEAR') %>%
   mutate(INCWAGE = INCWAGE) %>%
   select(-AWI_ADJUST)
 
-# Build population tables by sex and marital status
-
-# Married men
-pop_ssa_adjusted_1 <- df_pop_ssa %>%
-  select(year, age, m_mar) %>%
-  rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
-  mutate(MARST = 1, SEX = 1)
-
-# Married women
-pop_ssa_adjusted_2 <- df_pop_ssa %>%
-  select(year, age, m_mar) %>%
-  rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
-  mutate(MARST = 1, SEX = 2)
-
-# Unmarried women
-pop_ssa_adjusted_3 <- df_pop_ssa %>%
-  select(year, age, m_mar) %>%
-  rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
-  mutate(MARST = 0, SEX = 2)
-
-pop_ssa_grouped <- df_pop_ssa %>%
-  group_by(year) %>%
-  summarise(TOTAL_POP = sum(total)) %>%
-  rename(YEAR = year)
-
-samps_grouped <- samps %>%
-  group_by(YEAR) %>%
-  summarise(PEOPLE = n())
-
-samps_filtered <- samps %>%
-  filter(AGE < 100) %>%
-  group_by(YEAR, AGE, MARST, SEX) %>%
-  summarise(COUNT = n())
-
-econ_assumptions_filter <- df_econ_assumptions %>%
-  filter(ALTERNATIVE %in% c(0,2)) %>%
-  select(YEAR = REFYEAR, AWI) %>%
-  na.omit()
-
 # Calculate weights of each sample pop in the real population
 weights <- df_pop_ssa %>%
-  mutate(m_not_married = m_tot - m_mar) %>%
+  mutate(m_not_married = m_tot - m_mar ) %>%
   select(year, age, m_not_married) %>%
-  rename(YEAR = year, 
-         AGE = age, 
-         TOTAL_SSA = m_not_married) %>%
-  mutate(MARST = 0,
-         SEX = 1) %>%
-  rows_append(pop_ssa_adjusted_1) %>%
-  rows_append(pop_ssa_adjusted_2) %>%
-  rows_append(pop_ssa_adjusted_3) %>%
-  inner_join(pop_ssa_grouped) %>%
-  mutate(PERC_SSA = TOTAL_SSA / TOTAL_POP) %>%
-  inner_join(samps_grouped) %>%
+  rename(YEAR = year, AGE = age, TOTAL_SSA = m_not_married) %>%
+  mutate(MARST = 0, SEX = 1) %>%
+  
+  # Appends rows for married men
+  add_row(
+    df_pop_ssa %>%
+      select(year, age, m_mar) %>%
+      rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
+      mutate(MARST = 1, SEX = 1)
+  ) %>%
+  
+  # Appends rows for married women
+  add_row(
+    df_pop_ssa %>%
+      select(year, age, f_mar) %>%
+      rename(YEAR = year, AGE = age, TOTAL_SSA = f_mar) %>%
+      mutate(MARST = 1, SEX = 2)
+  ) %>%
+  
+  # Appends rows for unmarried women
+  add_row(
+    df_pop_ssa %>%
+      mutate(f_not_married = f_tot - f_mar) %>%
+      select(year, age, f_not_married) %>%
+      rename(YEAR = year, AGE = age, TOTAL_SSA = f_not_married) %>%
+      mutate(MARST = 0, SEX = 2)) %>%
+  
+  # Join total population by year
+  inner_join(
+    df_pop_ssa %>%
+      group_by(year) %>%
+      summarise(TOTAL_POP = sum(total)) %>%
+      rename(YEAR = year)
+  ) %>%
+  
+  # Compute share of total population
+  mutate(PERC_SSA = TOTAL_SSA/TOTAL_POP) %>%
+  inner_join(
+    samps %>%
+      group_by(YEAR) %>%
+      summarise(PEOPLE = n())
+  ) %>%
+  
+  # Compute how many sample people each cell should represent
   mutate(SAMPS_POP = PERC_SSA * PEOPLE) %>%
-  inner_join(samps_filtered) %>%
+  inner_join(
+    samps %>%
+      filter(AGE < 100) %>%
+      group_by(YEAR, AGE, MARST, SEX) %>%
+      summarise(COUNT = n())
+  ) %>%
+  
+  # Computing weight factor based on SAMPS_POP size
   mutate(WEIGHTS = SAMPS_POP/COUNT)
 
-# Joining weights back into dataset
 samps_w_weights <- samps %>%
   filter(AGE < 100) %>%
-  inner_join(weights, 
-             by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
+  inner_join(weights, by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
   group_by(YEAR) %>%
   mutate(MEAN_INCOME = mean(INCWAGE)) %>%
-  inner_join(econ_assumptions_filter) %>%
-  select(-TOTAL_SSA,
-         -TOTAL_POP,
-         -DISABWRK_PERC,
-         -PERC_SSA,
-         -PEOPLE, 
-         -SAMPS_POP, 
-         -COUNT, 
-         -MEAN_INCOME, 
-         -AWI)
+  inner_join(
+    df_econ_assumptions %>%
+      filter(ALTERNATIVE %in% c(0,2)) %>%
+      select(YEAR = REFYEAR, AWI) %>%
+      na.omit()
+  ) %>%
+  select(-TOTAL_SSA, -TOTAL_POP, -DISABWRK_PERC, -PERC_SSA, -PEOPLE, -SAMPS_POP, -COUNT,
+         -MEAN_INCOME, -AWI)
 
-pop_ssa_grouped <- df_pop_ssa %>%
-  group_by(year) %>%
-  summarise(TOTAL = sum(total)) %>%
-  rename(YEAR = year)
-
-econ_assumptions_filtered <- df_econ_assumptions %>%
-  filter(ALTERNATIVE %in% c(0, 2)) %>%
-  select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
-  na.omit()
-
-samps_w_weights <- samps_w_weights %>% 
-  mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE),
-         INCWAGE = INCWAGE) %>%
+samps_w_weights %>%
+  mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
+  mutate(INCWAGE = INCWAGE) %>%
   inner_join(MAX_INCOME %>% rename(YEAR = REFYEAR)) %>%
   
   # Caps incomes at MAX_INCOME (yearly maximum taxable)
-  mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME,
-                              MAX_INCOME,
-                              INCWAGE)) %>%
+  mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME, MAX_INCOME, INCWAGE)) %>%
   group_by(YEAR) %>%
   
   # Compute summary statistics 
   summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
-            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0]),
+            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0] ),
             LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
             N = n()) %>%
-  inner_join(pop_ssa_grouped) %>%
+  inner_join(
+    df_pop_ssa %>%
+      group_by(year) %>%
+      summarise(TOTAL = sum(total)) %>%
+      rename(YEAR = year)
+  ) %>%
   mutate(TOTAL = (1/1e9) * TOTAL_PAYROLL * (TOTAL/N)) %>%
-  inner_join(econ_assumptions_filtered) %>%
+  inner_join(
+    df_econ_assumptions %>%
+      filter(ALTERNATIVE %in% c(0,2)) %>%
+      select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
+      na.omit()
+  ) %>%
   
-  # Calculate percent difference between model's total taxable payroll and SSA's 
-  mutate(PERC_DIFF = (TAXABLE_PAYROLL - TOTAL) / TOTAL) %>%
+  # Calculate percent difference between model's total taxable payroll and SSA's
+  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL)/TOTAL) %>%
   print(n = 100)
-           
+
 samps_w_weights %>%
-  write_rds("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/initial_simulation.rds")
+  write_rds("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Documents/Social Security Files")
