@@ -98,4 +98,9 @@ Our model can also score a wide variety of reforms, including (but not limited t
 
 # Instructions For Using Repository
 * Create _init_sim_data.Rdata_ using _data_prep_init.R_ in _data_prep_. For your convenience, a copy of  _init_sim_data.Rdata_ has been uploaded into  _data_prep_.
-* Load _init_sim_data.Rdata_ into _initial_simulation.R_ in _code_src_, and run the code. This will output _initial_simulation.RDS_,.
+* Load _init_sim_data.Rdata_ into _initial_simulation.R_ in _code_src_, and run the code. This will output _initial_simulation.RDS_,. which contains simulated projections of the demographic structure of the United States for the entire projection period.
+* Create _baseline_data_prep.RData_ using _baseline_data_prep.R_. For your convenience, a copy of  _baseline_data_prep.RData_ has been uploaded.
+* Load _baseline_data_prep.RData_ and  _initial_simulation.RDS_ into _baseline_simulation.R_ in _code_src_. This will give you the Cato projections.
+* Note that _baseline_simulation.R_ cannot be run as it is, since it requires access to the Social Security 2006 PUF, which has been uploaded to the Cato MariaDB database. Users wishing to replicate _baseline_simulation.R_ must create a table of the PUF with the following format:
+<img width="473" height="196" alt="image" src="https://github.com/user-attachments/assets/50030b93-8198-4cf9-8982-aa67a88dd349" />
+
