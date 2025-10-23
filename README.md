@@ -66,6 +66,7 @@ $$Dist(m,f)=
 }$$
 
 Where π is the probability that the woman gets married. The woman with the minimum distance from the man is married. The woman, in this case, is assigned the spouse role, and this newly married couple is assigned a new household ID. 
+
 A similar process can be assigned for divorce. The SSA provides an estimate of the number of divorced individuals. To estimate the number of newly divorced individuals, we first find:
 
 
