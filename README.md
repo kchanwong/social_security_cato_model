@@ -97,5 +97,5 @@ Our model is able to yield a conventional, long-term Social Security analysis. T
 Our model can also score a wide variety of reforms, including (but not limited to) changes in the retirement ages, replacement rates, bend points, indexing years/methodology, and retirement credits/penalties. We cannot score policies relating to tax code changes, such as pass-through tax reforms. We also have limited capabilities to score provisions relating to changes in Windfall Elimination and the Government Pension Offset.  
 
 # Instructions For Using Repository
-* In order to use the code, you need to create two preprocessed _RData_ files that contains demographic information and other assumptions. All data preparation code is stored in _data_prep_. You have to do this once for the initial simulation, which is done using _data_init_prep.R_. This should output a RDS called _init_sim_data.RData_. For convenience, we have uploaded a copy of the _init_sim_data.RData_.
-* Once _init_sim_data.Rdata_ has been created, load that into 
+* Create _init_sim_data.Rdata_ using _data_prep_init.R_ in _data_prep_. For your convenience, a copy of  _init_sim_data.Rdata_ has been uploaded into  _data_prep_.
+* Load _init_sim_data.Rdata_ into _initial_simulation.R_ in _code_src_, and run the code. This will output _initial_simulation.RDS_,.
