@@ -103,4 +103,5 @@ Our model can also score a wide variety of reforms, including (but not limited t
 * Load _baseline_data_prep.RData_ and  _initial_simulation.RDS_ into _baseline_simulation.R_ in _code_src_. This will give you the Cato projections.
 * Note that _baseline_simulation.R_ cannot be run as it is, since it requires access to the Social Security 2006 PUF, which has been uploaded to the Cato MariaDB database. Users wishing to replicate _baseline_simulation.R_ must create a table of the PUF with the following format:
 <img width="473" height="196" alt="image" src="https://github.com/user-attachments/assets/50030b93-8198-4cf9-8982-aa67a88dd349" />
-
+# Further Assistance
+Please contact [socialsecurity@cato.org](socialsecurity@cato.org) for further inquiries and assistance. 
