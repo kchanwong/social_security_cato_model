@@ -104,6 +104,10 @@ Our model can also score a wide variety of reforms, including (but not limited t
 * Note that _baseline_simulation.R_ cannot be run as it is, since it requires access to the Social Security 2006 PUF, which has been uploaded to the Cato MariaDB database. Users wishing to replicate _baseline_simulation.R_ must create a table of the PUF with the following format:
 <img width="473" height="196" alt="image" src="https://github.com/user-attachments/assets/50030b93-8198-4cf9-8982-aa67a88dd349" />
 
+# To-Do
+1. Finish refactoring baseline_simulation.R
+2. Change directories for local files. 
+
 # Validation of Model
 To validate your results, please use set.seed(2025). 
 
