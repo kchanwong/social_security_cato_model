@@ -11,66 +11,82 @@ library(survey)
 library(forecast)
 library(DBI)
 
-set.seed(2025)
+load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_population.Rdata")
+load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_fertility.Rdata")
+load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_mortality.Rdata")
+load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/data_immigration.RData")
+load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/ocact_assumptions.RData")
+
+credits <- read_csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/credits_coverage.csv") 
+
+# Add future years using 2025 data and economic assumptions  
+credits <- credits %>%
+  add_row(
+    credits %>% 
+      filter(Year == 2025) %>%
+      mutate(Year = list(2026:2100)) %>%
+      unnest(Year) %>%
+      inner_join(
+        df_econ_assumptions %>%
+          filter(ALTERNATIVE %in% c(0,2)) %>%
+          mutate(AWI_GROWTH = 250 * AWI/9226.48) %>%
+          select(Year = REFYEAR, AWI_GROWTH) %>%
+          na.omit(),
+        by = 'Year'
+      ) %>%
+      select(Year, Earnings = AWI_GROWTH)
+  )
+
 dfSamps <- readRDS("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/initial_sim.rds") %>%
   mutate(INCWAGE = INCWAGE)
-load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/baseline_data_prep.RData")
 
-dfSamps %>%
-  
-  # Set incomes of those outside labor force to 0
-  mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
-  mutate(INCWAGE = INCWAGE) %>% ## ?
-  
-  # Joins taxable maximums
-  inner_join(MAX_INCOME %>% 
-               rename(YEAR = REFYEAR)) %>%
-  
-  # Cap wages at taxable maximum
-  mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME, MAX_INCOME, INCWAGE)) %>%
-  
-  # Create summaries using weights
-  group_by(YEAR) %>%
-  summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
-            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0] ),
-            LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
-            N = n()) %>%
-  
-  # Join with SSA population totals
-  inner_join(
-    df_pop_ssa %>%
-      group_by(year) %>%
-      summarise(TOTAL = sum(total)) %>%
-      rename(YEAR = year)
+# Create base data frame manually for 1951-1971
+MAX_INCOME <- data.frame(
+  REFYEAR = 1951:1971,
+  MAX_INCOME = c(
+    rep(3600, 4),
+    rep(4200, 4),
+    rep(4800, 7),
+    rep(6600, 2),
+    rep(7800, 4))
   ) %>%
   
-  # Makes estimate of total taxable payroll
-  mutate(TOTAL = (1/1e9) * TOTAL_PAYROLL * (TOTAL/N)) %>%
+  # Add rows for 1972-1993 from csv
+  add_row(read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/df_max_income_1993.csv") %>%
+            mutate(MAX_INCOME = as.integer(MAX_INCOME))) %>%
   
-  # Join with SSA official economic assumptions
-  inner_join(
+  # Add rows for >1994
+  add_row(
+    
+    # MAX_INCOME for 1994 onwards
     df_econ_assumptions %>%
-      filter(ALTERNATIVE %in% c(0,2)) %>%
-      select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
-      na.omit()
+      filter(REFYEAR > 1994,
+             ALTERNATIVE %in% c(0,2)) %>%
+      
+      # Uses AWI value from 2 years prior
+      mutate(BASE = lag(AWI, 2),
+             YEAR = lag(REFYEAR, 2),
+             
+             # Computing adjusted max taxable income
+             BASE_CONTRIB = 300 * round((1/300) * (lag(AWI, 2) * 60600) / 22935.42)) %>%
+      
+      select(REFYEAR, MAX_INCOME = BASE_CONTRIB)
   ) %>%
-  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL)/TOTAL) %>%
-  print(n = 100)
+  na.omit()
 
 # Keeps only non-null, unique IDs
 SSA_ID <- dfSamps %>%
   distinct(SSA_ID) %>%
   na.omit() %>%
-  pull ()
+  pull()
 
 # Combine SSA_ID into comma-separated string
-vector_string <- paste(SSA_ID, collapse = ', ')
-
-query <- paste(
-  "select * from social_security_research.puf_earnings_2006 where ID in",
-  paste('(', vector_string, ')', sep = ''),
-  sep = ' '
-)
+vector_string <- paste(SSA_ID, 
+                       collapse = ',')
+query <- paste("select * from social_security_research.puf_earnings_2006 where ID in", 
+               paste('(', vector_string, ')', 
+                     sep = ''), 
+               sep = ' ')
 
 # DELETE BEFORE UPLOADING !!!!!!!!!!!!!!!!!!!
 db <- dbConnect()
@@ -87,13 +103,14 @@ dfSamps_joined <- dfSamps %>%
   filter(!is.na(SSA_ID)) %>%
   distinct(ID, SSA_ID) %>%
   
-  # Merge earnings data where SSA_ID matches
+  # Earnings data merged where SSA_ID matches
   left_join(earnings,
             by = 'SSA_ID',
             relationship = 'many-to-many') %>%
   
   mutate(ANNUAL_EARNINGS = as.double(ANNUAL_EARNINGS),
          YEAR_EARN = as.double(YEAR_EARN)) %>%
+  
   select(-SSA_ID, -ANNUAL_QTRS) %>%
   add_row(dfSamps %>%
             mutate(INCWAGE = INCWAGE) %>%
@@ -101,8 +118,7 @@ dfSamps_joined <- dfSamps %>%
                    YEAR_EARN = YEAR,
                    ANNUAL_EARNINGS = INCWAGE)) 
 
-
-# Join birth year data, retirement data, add Full Retirement Age 
+# Joins birth year data, retirement data, add Full Retirement Age 
 onlyRetired <- dfSamps_joined %>%
   
   # Dataset with one YEAR_BORN per individual
@@ -152,7 +168,7 @@ AWI <- rbind(
             4658.72, 4938.36,
             5213.44, 5571.76,
             5893.76)),
-  df_econ_assumptions %>% 
+  df_econ_assumptions %>%
     filter(ALTERNATIVE %in% c(0,2)) %>%
     select(YEAR_EARN = REFYEAR, AWI) %>%
     na.omit()
@@ -169,19 +185,6 @@ cola <- read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security 
     )
   )
 
-# Compute cumulative nominal wage growth after 2025
-econ_assumptions_refyear <- df_econ_assumptions %>%
-      filter(ALTERNATIVE %in% c(0,2)) %>%
-      select(REFYEAR, GROWTH_WAGE_NOMINAL) %>%
-      na.omit() %>%
-      mutate(PERC_GROWTH = 1 + (GROWTH_WAGE_NOMINAL / 100)) %>%
-      filter(REFYEAR >= 2025) %>%
-      mutate(PERC_GROWTH = ifelse(REFYEAR == 2025, 1, PERC_GROWTH),
-             PERC_CUM_GROWTH = cumprod(PERC_GROWTH)) %>%
-      select(REFYEAR, PERC_CUM_GROWTH) %>%
-      filter(REFYEAR > 2025) %>%
-      rename(YEAR = REFYEAR)
-  
 # Convert monthly bend points to annual
 family_bend_points <- read.csv(
   "C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/family_bend_points.csv") %>%
@@ -202,15 +205,29 @@ family_bend_points <- family_bend_points %>%
       mutate(year = list(2026:2100)) %>%
       unnest(year) %>%
       rename(YEAR = year) %>%
-      inner_join(econ_assumptions_refyear) %>%
-      mutate(across(contains('_bp'), 
-                    ~ round(. * PERC_CUM_GROWTH))) %>%
+      
+      # Compute cumulative nominal wage growth after 2025
+      inner_join(
+        df_econ_assumptions %>%
+          filter(ALTERNATIVE %in% c(0,2)) %>%
+          select(REFYEAR, GROWTH_WAGE_NOMINAL) %>%
+          na.omit() %>%
+          mutate(PERC_GROWTH = 1 + (GROWTH_WAGE_NOMINAL/100)) %>%
+          filter(REFYEAR >= 2025) %>%
+          mutate(PERC_GROWTH = ifelse(REFYEAR == 2025, 1, PERC_GROWTH)) %>%
+          mutate(PERC_CUM_GROWTH = cumprod(PERC_GROWTH)) %>%
+          select(REFYEAR, PERC_CUM_GROWTH) %>%
+          filter(REFYEAR > 2025) %>%
+          rename(YEAR = REFYEAR)
+      ) %>%
+      mutate(across(contains('_bp'), ~ round(. * PERC_CUM_GROWTH))) %>%
       rename(
         first_bp_fam = first_bp,
         second_bp_fam = second_bp,
-        third_bp_fam = third_bp) %>%
+        third_bp_fam = third_bp
+      ) %>%
       select(-contains('GROWTH'))
-      )
+  )
 
 # Read in past SS bend points and project for future years using AWI
 dfBendPoint2025 <- read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/bend_point.csv") %>%
@@ -225,14 +242,16 @@ dfBendPoint2025 <- read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Socia
       first_bp = 2160,
       second_bp = 13020
     ) %>%
-    
-      # Extract AWI from dataset of economic assumptions
-      left_join(df_econ_assumptions %>%
-                  filter(ALTERNATIVE %in% c(0, 2)) %>%
-                  select(YEAR = REFYEAR, AWI) %>%
-                  na.omit()) %>%
+      left_join(
+        
+        # Extract AWI from dataset of economic assumptions
+        df_econ_assumptions %>%
+          filter(ALTERNATIVE %in% c(0, 2)) %>%
+          select(YEAR = REFYEAR, AWI) %>%
+          na.omit()
+      ) %>%
       
-      # 9779.44? 
+      # 9779.44 is AWI for 1977, base year from SSA formula
       mutate(AWI_ADJUST = lag(AWI, 2)/9779.44) %>%
       
       # Apply adjustment to bend points
@@ -242,6 +261,8 @@ dfBendPoint2025 <- read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Socia
       filter(YEAR >= 2022)
     )
 
+# Calculate Primary Insurance Amounts
+# Combine individual simulation data with economic assumptions
 PIA <-  onlyRetired %>%
   mutate(BIRTH_YEAR = YEAR_BORN) %>%
   
@@ -251,108 +272,102 @@ PIA <-  onlyRetired %>%
                mutate(CREDIT = 10 * round((1/10) * CREDIT)) %>%
                rename(YEAR_EARN = Year) %>%
                select(YEAR_EARN, CREDIT)) %>%
-  
-  # Compute how many credits an individual earned
   mutate(CREDIT_EARNED = pmin(round(ANNUAL_EARNINGS/CREDIT), 4)) %>%
-  
-  # Calculate reference age, total credits, and retirement age limits
-  mutate(AGE_AT_2007 = 2007 - YEAR_BORN) %>%
+  mutate(
+    AGE_AT_2007 = 2007 - YEAR_BORN
+  ) %>%
   group_by(ID) %>%
   mutate(CREDITS = sum(CREDIT_EARNED)) %>%
   mutate(AGE_RETIRE = RETIRE_YEAR - YEAR_BORN) %>%
   mutate(MIN_RA = 62,
          MAX_RA = 70) %>%
   filter(AGE >= 18) %>%
-  
-  # Join Average Wage Index 
   left_join(
     AWI,
-    by = c('YEAR_EARN')) %>%
-  
+    by = c('YEAR_EARN')
+  ) %>%
   mutate(INDEX_START = YEAR_BORN + 60) %>%
-  
   left_join(
     AWI %>%
       rename(INDEX_START = YEAR_EARN, INDEX_AWI_START = AWI),
-    by = c('INDEX_START')) %>%
-  
+    by = c('INDEX_START')
+  ) %>%
   inner_join(
     MAX_INCOME %>%
-      select(YEAR_EARN = REFYEAR, MAX_INCOME)) %>%
+      select(YEAR_EARN = REFYEAR, MAX_INCOME)
+  ) %>%
   
+  # Only workers with at least 40 credits
   filter(CREDITS  >= 40) %>%
   
-  # Adjust earnings based on AWI to compute Average Indexed Monthly Earnings (AIME):
-  # Set to taxable max if annual earnings are greater than max income
+  # Cap earnings at max taxable income for that year
   mutate(ANNUAL_EARNINGS = ifelse(ANNUAL_EARNINGS > MAX_INCOME, MAX_INCOME, ANNUAL_EARNINGS)) %>%
   select(-MAX_INCOME) %>%
   
-  # Compute index factor
+  # Compute indexing factor to adjust year earnings using AWI
   mutate(INDEX_FACTOR = INDEX_AWI_START/AWI) %>%
   mutate(INDEX_FACTOR = ifelse(AGE >= 60, 1, INDEX_FACTOR)) %>%
   mutate(BEND_POINT_YEAR = YEAR_BORN  + 62) %>%
   select(-AWI, -INDEX_START, -INDEX_AWI_START) %>%
   
-  # Adjust past wages to "real" wage terms
+  # Inflation-adjusted earnings for each working year
   mutate(INDEXED_EARNINGS = ANNUAL_EARNINGS * INDEX_FACTOR) %>%
   select(-AGE_AT_2007, -MIN_RA, -MAX_RA) %>%
+  
+  # Set post-retirement earnings to 0
   mutate(ANNUAL_EARNINGS = ifelse(AGE >= 70 | RETIRE_YEAR <= YEAR_EARN, 0, ANNUAL_EARNINGS)) %>%
   filter(YEAR_EARN < RETIRE_YEAR) %>%
   arrange(ID, -INDEXED_EARNINGS) %>%
-  
-  # Select 35 highest earning years
-  group_by(ID, 
-           BIRTH_YEAR, 
-           RETIRE_YEAR, 
-           BEND_POINT_YEAR, 
-           AGE_RETIRE, 
-           FRA) %>%
+  group_by(ID, BIRTH_YEAR, RETIRE_YEAR, BEND_POINT_YEAR, AGE_RETIRE, FRA) %>%
   slice_head(n = 35) %>%
-  
-  # Compute Average Indexed Monthly Earnings
   summarise(AIME = mean(INDEXED_EARNINGS),
             CREDITS_EARNED = sum(CREDIT_EARNED)) %>%
-  
   inner_join(dfBendPoint2025 %>%
                select(BEND_POINT_YEAR = YEAR,
                       first_bp, second_bp)) %>%
-  
-  # Compute the Primary Insurance Amount from AIME, applying SSA bend point formula
   arrange(RETIRE_YEAR) %>%
   mutate(PIA = case_when(
     AIME  < first_bp ~ 0.9 * AIME ,
     AIME  < second_bp ~ 0.9 * first_bp + 0.32 * (AIME  - first_bp),
-    AIME  > second_bp ~ 0.9 * first_bp + 0.32 * (second_bp - first_bp) + 0.15 * (AIME  - second_bp))) %>%
-  
-  inner_join(dfSamps %>%
+    AIME  > second_bp ~ 0.9 * first_bp + 0.32 * (second_bp - first_bp) + 0.15 * (AIME  - second_bp)
+  )
+  ) %>%
+  inner_join(
+    dfSamps %>%
       filter(RETIRED == 1) %>%
       group_by(ID) %>%
-      summarise(DEATH_YEAR = max(YEAR))) %>%
-  
+      summarise(DEATH_YEAR = max(YEAR))
+  ) %>%
   mutate(LIFE_SPAN = DEATH_YEAR - BIRTH_YEAR) %>%
   mutate(YEARS_NOT_FRA = 12 * (AGE_RETIRE - FRA)) %>%
   mutate(CREDITS =
            case_when(
              YEARS_NOT_FRA == 0 ~ 1,
-             YEARS_NOT_FRA >= -36 & YEARS_NOT_FRA <= 0 ~ YEARS_NOT_FRA * (5/9)*(0.01),
-             YEARS_NOT_FRA >= -60 & YEARS_NOT_FRA < -36 ~ ((36) * (5/9)*(-0.01) - (YEARS_NOT_FRA+36) * (5/12)*(-0.01)),
+             -36 <= YEARS_NOT_FRA & YEARS_NOT_FRA <= 0 ~ YEARS_NOT_FRA * (5/9)*(0.01),
+             -60 <= YEARS_NOT_FRA & YEARS_NOT_FRA < -36 ~ ((36) * (5/9)*(-0.01) - (YEARS_NOT_FRA+36) * (5/12)*(-0.01)),
              YEARS_NOT_FRA > 0 & BIRTH_YEAR %in% c(1917:1924) ~ (1/12) * YEARS_NOT_FRA/12 * (0.03),
              YEARS_NOT_FRA > 0 & BIRTH_YEAR %in% seq(1925, 1941, by = 2) ~ YEARS_NOT_FRA/12 * (0.03 + 0.0025 * ((BIRTH_YEAR + 1)-1924)),
              YEARS_NOT_FRA > 0 & BIRTH_YEAR %in% seq(1926, 1942, by = 2)  ~ YEARS_NOT_FRA/12 * (0.03 + 0.0025 * ((BIRTH_YEAR)-1924)),
-             TRUE ~ YEARS_NOT_FRA/12 * 0.08)) %>%
+             TRUE ~ YEARS_NOT_FRA/12 * 0.08
+           )
+  ) %>%
   mutate(PIA_ADJ =
            ifelse(
              CREDITS == 1,
              PIA,
-             PIA * (1 + CREDITS)))
+             PIA * (1+CREDITS )
+           ))
 
-# ------------------------------------------------------
-  
 PIA_BY_YEAR <- PIA %>%
   mutate(YEAR = list(seq(RETIRE_YEAR, DEATH_YEAR))) %>%
   unnest(YEAR) %>%
   ungroup() %>%
-  select(ID, PIA = PIA_ADJ, AIME, RETIRE_YEAR, BIRTH_YEAR, YEAR) %>%
+  select(ID, 
+         PIA = PIA_ADJ, 
+         AIME, 
+         RETIRE_YEAR, 
+         BIRTH_YEAR, 
+         YEAR) %>%
   mutate(AGE = YEAR - BIRTH_YEAR) %>%
   select(-BIRTH_YEAR) %>%
   inner_join(cola) %>%
@@ -365,6 +380,33 @@ PIA_BY_YEAR <- PIA %>%
   inner_join(
     dfSamps %>% select(ID, YEAR, WEIGHTS), by = c('ID', 'YEAR')
   )
+
+
+# ------------------------------------------------------
+
+PIA_BY_YEAR <- PIA %>%
+  mutate(YEAR = list(seq(RETIRE_YEAR, DEATH_YEAR))) %>%
+  unnest(YEAR) %>%
+  ungroup() %>%
+  select(ID, 
+         PIA = PIA_ADJ, 
+         AIME, 
+         RETIRE_YEAR, 
+         BIRTH_YEAR, 
+         YEAR) %>%
+  mutate(AGE = YEAR - BIRTH_YEAR) %>%
+  select(-BIRTH_YEAR) %>%
+  inner_join(cola) %>%
+  mutate(COLA = ifelse(RETIRE_YEAR == YEAR, 1, COLA)) %>%
+  group_by(ID) %>%
+  mutate(GROWTH_FACTOR = cumprod(COLA)) %>%
+  mutate(PIA_COLA = PIA * GROWTH_FACTOR) %>%
+  select(ID, YEAR, AGE, PIA_COLA, GROWTH_FACTOR) %>%
+  filter(YEAR >= 2007) %>%
+  inner_join(
+    dfSamps %>% select(ID, YEAR, WEIGHTS), by = c('ID', 'YEAR')
+  )
+
 PIA_W_DEMOS <- PIA %>%
   mutate(YEAR = list(seq(RETIRE_YEAR, DEATH_YEAR))) %>%
   unnest(YEAR) %>%
