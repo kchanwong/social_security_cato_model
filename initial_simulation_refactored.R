@@ -10,7 +10,7 @@ library(survey)
 library(forecast)
 set.seed(2025)
 ## LOAD DATA --------------------
-load("C:/Users/UmanaAhmed/Downloads/init_sim_data.RData")
+load("data_prep/init_sim_data.RData")
 potential_ids <- sprintf("%08d", sample(1000000:9999999, 5000000))  # 10,000 candidates
 
 ## MORTALITY AND NEW HOUSEHOLDS -------------------- 
@@ -26,14 +26,18 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
 # Life table data for the current year
   life_table_now <- cohort_life_tables %>%
     filter(YEAR_LIVING == YEAR_NOW) %>%
-    select(AGE = age,
-           PR_DEATH = m_q_x) %>%
+    select(
+      AGE = age,
+      PR_DEATH = m_q_x
+      ) %>%
     mutate(SEX = 1) %>%
     add_row(
       cohort_life_tables %>%
         filter(YEAR_LIVING == YEAR_NOW) %>%
-        select(AGE = age,
-               PR_DEATH = f_q_x) %>%
+        select(
+          AGE = age,
+          PR_DEATH = f_q_x
+          ) %>%
         mutate(SEX = 2)
     )
   
@@ -45,15 +49,19 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
     mutate(DEATHS = round(COUNT * PR_DEATH)) %>%
     ungroup() %>%
     filter(DEATHS > 0) %>%
-    select('AGE', 'SEX', 'DEATHS')
+    select(
+      'AGE', 
+      'SEX', 
+      'DEATHS'
+      )
   
 # Detect dead IDs
   id_dead <- c()
   
   for(i in 1:nrow(dfDeaths)){
     id_dead <- c(id_dead,
-                 dfInitSamps[which(dfInitSamps$AGE == dfDeaths$AGE[i] 
-                                   & dfInitSamps$SEX == dfDeaths$SEX[i]),] %>% 
+                 dfInitSamps[which(dfInitSamps$AGE == dfDeaths$AGE[i] & 
+                                     dfInitSamps$SEX == dfDeaths$SEX[i]),] %>% 
                    select(ID) %>%
                    slice_sample(n = dfDeaths$DEATHS[i]) %>% 
                    pull(ID)
@@ -61,34 +69,45 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
   }
   
   dfInitSamps_deaths <- dfInitSamps %>%
-    mutate(DEAD = ifelse(ID %in%
-                           id_dead, 1, 0)) %>%
-    mutate(AGE = AGE + 1,
-           YEAR = YEAR_NOW)
+    mutate(DEAD = ifelse(ID %in% id_dead, 1, 0)) %>%
+    mutate(
+      AGE = AGE + 1,
+      YEAR = YEAR_NOW
+      )
   
 # Detect widowed individuals
   widows <- dfInitSamps_deaths %>%
     ungroup() %>%
+    
     # DEAD is household-level and >= 1 means someone in the household has died
     filter(MARST == 1 & DEAD >= 1) %>%
     arrange(SERIAL) %>%
     mutate(
+      
       # PERNUM_SP is the spouse's person number (may be missing)
       PERNUM_SP = ifelse(is.na(PERNUM_SP), PERNUM, PERNUM_SP)
       ) %>%
-    select(ID, PERNUM_SP = PERNUM) %>%
+    select(
+      ID, 
+      PERNUM_SP = PERNUM
+      ) %>%
+    
     # Returns data frame with ID, PERNUM_SP (spouse number), and WIDOWED = 1
     mutate(WIDOWED = 1)
   
 # Update marital status to reflect widowhood
   dfInitSamp_deaths_w_widow <- dfInitSamps_deaths %>%
-  # Remove old versions of widow rows
+  
+    # Remove old versions of widow rows
     filter(!ID %in% widows$ID) %>%
-  # Add updated widow records
+  
+    # Add updated widow records
     add_row(widows) %>%
-  # Keep only alive individuals
+  
+    # Keep only alive individuals
     filter(DEAD == 0) %>%
-  # Update marital status if widowed 
+  
+    # Update marital status if widowed 
     mutate(
       WIDOWED = ifelse(is.na(WIDOWED),  0L, WIDOWED),
       MARST = ifelse(WIDOWED == 1, 0, MARST)
@@ -110,6 +129,7 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
   
   # Prepare new independent household entries for 18 year olds
   new_unit_ids <- sample(new_ids, new18yo %>% nrow())
+  
   dfInitSamp_new_units <- dfInitSamp_deaths_w_widow %>%
     filter(AGE < 18 | RELATE != 301) %>%
     add_row(
@@ -144,10 +164,11 @@ makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
     left_join(fert_data, 
               by = 'AGE') %>%
     mutate(
-      FERT_PER_CAPITA = ifelse(is.na(FERT_PER_CAPITA), 0, 
-                               FERT_PER_CAPITA),
+      FERT_PER_CAPITA = 
+        ifelse(is.na(FERT_PER_CAPITA), 0, FERT_PER_CAPITA),
       PR_BABY = runif(n()),
-      BABY = ifelse(PR_BABY < FERT_PER_CAPITA, 1, 0)
+      BABY = 
+        ifelse(PR_BABY < FERT_PER_CAPITA, 1, 0)
     )
   
   # Filter for those with babies and assign attributes
@@ -181,7 +202,10 @@ makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
     summarise(PERNUM = max(PERNUM)) %>%
     mutate(PERNUM_ACTUAL = PERNUM + 1) %>%
     ungroup() %>%
-    select(SERIAL, PERNUM_ACTUAL)
+    select(
+      SERIAL, 
+      PERNUM_ACTUAL
+      )
   
   # Finalize baby records
   babies_final <- babies_augmented %>%
@@ -189,7 +213,10 @@ makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
     mutate(
       PERNUM = PERNUM_ACTUAL
     ) %>%
-    select(-PERNUM_ACTUAL, -FERT_PER_CAPITA)
+    select(
+      -PERNUM_ACTUAL, 
+      -FERT_PER_CAPITA
+      )
   
   # Assign unique IDs to new babies
   existing_ids <- dfInitSamp_new_units$ID
@@ -201,7 +228,11 @@ makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
     select(-contains("DEATH"), -DEAD) %>%
     add_row(
       babies_final %>%
-        select(-contains("DEATH"), -DEAD, -contains("BABY")) %>%
+        select(
+          -contains("DEATH"), 
+          -DEAD, 
+          -contains("BABY")
+          ) %>%
         mutate(ID = BABY_ID)
     )
   
@@ -221,10 +252,12 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
 # Estimate the men who will be married in year t+1 
   # Identify eligible single men (age 18-70, not widowed)
   singleMen <- dfInitSamp_babies %>%
-    filter(SEX == 1, 
-           MARST == 0, 
-           WIDOWED == 0, 
-           AGE %in% c(18:70)) %>%
+    filter(
+      SEX == 1, 
+      MARST == 0, 
+      WIDOWED == 0, 
+      AGE %in% c(18:70)
+      ) %>%
     arrange(AGE)
   
   # Estimate % of unmarried men by age, compare with SSA data
@@ -234,13 +267,18 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     inner_join(
       df_pop_ssa %>%
         filter(year == YEAR_NOW) %>%
-        mutate(marry_perc = m_mar/m_tot) %>%
-        select(AGE = age, MARRY_PERC_ACTUAL = marry_perc),
+        mutate(marry_perc = m_mar / m_tot) %>%
+        select(
+          AGE = age, 
+          MARRY_PERC_ACTUAL = marry_perc
+          ),
       by = 'AGE'
       ) %>%
     # Find difference between in-sample marriage percentage and SSA projected
     mutate(MARRY_PERC = MARRY_PERC_ACTUAL - PERC_MARRIED) %>%
-    mutate(MARRY_PERC = ifelse(MARRY_PERC < 0, 0, MARRY_PERC)) %>%
+    mutate(MARRY_PERC = 
+             ifelse(MARRY_PERC < 0, 0, MARRY_PERC)
+           ) %>%
     select(AGE, MARRY_PERC)
   
   # Join gap data to men and assign marriage decision
@@ -253,37 +291,50 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     
   # Find the likelihood of a single woman to be married
   single_women <- dfInitSamp_babies %>%
-    filter(SEX == 2,
-           MARST == 0, 
-           WIDOWED == 0, 
-           AGE %in% 18:70) %>%
+    filter(
+      SEX == 2,
+      MARST == 0,
+      WIDOWED == 0, 
+      AGE %in% 18:70
+      ) %>%
     inner_join(
       df_pop_ssa %>% 
         filter(year == YEAR_NOW) %>%
         mutate(MARRY_PERC_FEMALE = f_mar / f_tot) %>%
-        select(AGE = age, MARRY_PERC_FEMALE),
+        select(
+          AGE = age, 
+          MARRY_PERC_FEMALE
+          ),
       by = "AGE"
     )
   
   # Attempt to match men who will marry with women using Euclidean distance 
   matches <- men_with_marry_prob %>%
     filter(MARRY == 1) %>%
-    select(ID, AGE, INCWAGE) %>%
+    select(
+      ID, 
+      AGE, 
+      INCWAGE
+      ) %>%
     cross_join(
       single_women %>%
-        select(ID_SP = ID, 
-               AGE_SP = AGE, 
-               INCWAGE_SP = INCWAGE,
-               PERC_MARRY = MARRY_PERC_FEMALE)
+        select(
+          ID_SP = ID, 
+          AGE_SP = AGE, 
+          INCWAGE_SP = INCWAGE,
+          PERC_MARRY = MARRY_PERC_FEMALE
+          )
       ) %>%
     # Find women with lowest weighted Euc. distance based on inc and age
     mutate(
       DISTANCE = (1/PERC_MARRY) * sqrt(((INCWAGE - INCWAGE_SP)^2 / 1000)
                                        + (AGE - AGE_SP)^2)) %>%
         filter(DISTANCE < 999999999) %>%
-        arrange(ID, DISTANCE) %>%
+        arrange(
+          ID, 
+          DISTANCE
+          ) %>%
         group_by(ID) %>%
-        
         slice_min(DISTANCE, n = 5) %>%
         ungroup()
   
@@ -292,8 +343,10 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
   
   for (id in matches %>% distinct(ID) %>% pull()) {
     id_sp <- matches %>%
-      filter(ID == id, 
-             !ID_SP %in% serialID_married) %>%
+      filter(
+        ID == id, 
+        !ID_SP %in% serialID_married
+        ) %>%
       head(1)
     
     if (nrow(id_sp) == 0) {
@@ -314,18 +367,21 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     left_join(
       single_women %>%
         select(-contains('SP')) %>%
-        select(ID_SP = ID, 
-               PERNUM_SP = PERNUM,
-               SSA_ID_SP = SSA_ID, 
-               INCWAGE_SP = INCWAGE, 
-               LABFORCE_SP = LABFORCE, 
-               DISABWRK_SP = DISABWRK,
-               RETIRED_SP = RETIRED),
+        select(
+          ID_SP = ID, 
+          PERNUM_SP = PERNUM, 
+          SSA_ID_SP = SSA_ID, 
+          INCWAGE_SP = INCWAGE,
+          LABFORCE_SP = LABFORCE, 
+          DISABWRK_SP = DISABWRK,
+          RETIRED_SP = RETIRED
+          ),
       by = 'ID_SP'
     ) %>%
     mutate(
       MARST = 1,
-      SAMPLE_NO = SAMPLE_NO + 1)
+      SAMPLE_NO = SAMPLE_NO + 1
+      )
   
   # Create married women entries
   married_women <- single_women %>%
@@ -333,24 +389,31 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     select(-contains('SP')) %>%
     inner_join(
       married_men %>%
-        select(ID = ID_SP,
-               ID_SP = ID,
-               SERIAL_SP = SERIAL,
-               SAMPLE_NO_SP = SAMPLE_NO,
-               PERNUM_SP = PERNUM,
-               SSA_ID_SP = SSA_ID,
-               INCWAGE_SP = INCWAGE,
-               LABFORCE_SP = LABFORCE,
-               DISABWRK_SP = DISABWRK,
-               RETIRED_SP = RETIRED),
+        select(
+          ID = ID_SP,
+          ID_SP = ID,
+          SERIAL_SP = SERIAL,
+          SAMPLE_NO_SP = SAMPLE_NO, 
+          PERNUM_SP = PERNUM,
+          SSA_ID_SP = SSA_ID,
+          INCWAGE_SP = INCWAGE,
+          LABFORCE_SP = LABFORCE,
+          DISABWRK_SP = DISABWRK,
+          RETIRED_SP = RETIRED
+          ),
       by = 'ID'
     ) %>%
-    mutate(MARST = 1,
-           RELATE = 201, 
-           PERNUM = 2,
-           SERIAL = SERIAL_SP,
-           SAMPLE_NO = SAMPLE_NO_SP) %>%
-    select(-SERIAL_SP, -SAMPLE_NO_SP)
+    mutate(
+      MARST = 1,
+      RELATE = 201, 
+      PERNUM = 2,
+      SERIAL = SERIAL_SP,
+      SAMPLE_NO = SAMPLE_NO_SP
+      ) %>%
+    select(
+      -SERIAL_SP, 
+      -SAMPLE_NO_SP
+      )
   
   # Singles and married 
   singles_and_married <- single_women %>%
@@ -359,7 +422,11 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     add_row(
       married_men %>%
         filter(!is.na(ID_SP)) %>%
-        select(-MARRY_PERC, -MARRY, -PR_NOT_MARRY) %>%
+        select(
+          -MARRY_PERC, 
+          -MARRY, 
+          -PR_NOT_MARRY
+          ) %>%
         mutate(MARST = 1)) %>%
     add_row(
       married_women %>%
@@ -388,7 +455,8 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     filter(MARST == 1) %>%
     inner_join(
       div_rate_by_age,
-      by = c('AGE')) %>%
+      by = c('AGE')
+      ) %>%
     mutate(DIV_RATE = max_div_rate)
   
   # ** Divorcees - PUT IN MORE DETAIL
@@ -401,8 +469,10 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     mutate(SAMPLE_NO = SAMPLE_NO + 1)
 
   divorced_head <- divorcees %>%
-    filter(PERNUM == 1,
-           ID %in% divorced_spouse$ID_SP) %>%
+    filter(
+      PERNUM == 1,
+      ID %in% divorced_spouse$ID_SP
+      ) %>%
     select(-DIV_RATE) %>%
     mutate(DIVORCED = 1)
   
@@ -455,25 +525,34 @@ makeIncome_and_LF_and_Disability <- function(YEAR_NOW, dfInitSamp_divorced) {
   
   # Calculate actual LFPR in simulated data
   actual_lfpr <- dfInitSamp_LAB_FORCE_transition %>%
-    group_by(AGE, SEX) %>%
-    summarise(LFPR = sum(LABFORCE == 1)/n(),
-              LFPR_VOL = sum(LABFORCE == 1),
-              COUNT = n()) %>%
+    group_by(
+      AGE, 
+      SEX
+      ) %>%
+    summarise(
+      LFPR = sum(LABFORCE == 1)/n(),
+      LFPR_VOL = sum(LABFORCE == 1),
+      COUNT = n()
+      ) %>%
     filter(AGE >= 18)
   
   # Join with SSA LFPR targets and compute differences 
   targets_lfpr <- LFPR %>%
     filter(Year == YEAR_NOW) %>%
     mutate(Value = Value/100) %>%
-    rename(YEAR = Year,
-           SEX = Sex, 
-           AGE = AgeRange, 
-           LFPR_SSA = Value
-           )
+    rename(
+      YEAR = Year,
+      SEX = Sex, 
+      AGE = AgeRange, 
+      LFPR_SSA = Value
+      )
   
   # Determine if LFPR needs to be changed from SSA data
   adjust_lfpr <- actual_lfpr %>%
-    left_join(targets_lfpr, by = c("AGE", "SEX")) %>%
+    left_join(
+      targets_lfpr, 
+      by = c("AGE", "SEX")
+      ) %>%
     mutate(
       DIFF = LFPR_SSA - LFPR,
       NEED_CHANGE = round(COUNT * DIFF)
@@ -482,9 +561,16 @@ makeIncome_and_LF_and_Disability <- function(YEAR_NOW, dfInitSamp_divorced) {
   # Join NEED_CHANGE values to main data
   dfInitSamp_LAB_FORCE_transition <- dfInitSamp_LAB_FORCE_transition %>%
     left_join(adjust_lfpr %>% 
-                select(AGE, SEX, NEED_CHANGE), 
+                select(
+                  AGE, 
+                  SEX, 
+                  NEED_CHANGE
+                  ), 
               by = c("AGE", "SEX")) %>%
-    group_by(AGE, SEX) %>%
+    group_by(
+      AGE, 
+      SEX
+      ) %>%
     group_modify(~ {
       df <- .x
       need_change <- unique(df$NEED_CHANGE)
@@ -524,12 +610,17 @@ makeIncome_and_LF_and_Disability <- function(YEAR_NOW, dfInitSamp_divorced) {
   
   # Assign disability status
   dfInitSamp_LAB_FORCE_transition <- dfInitSamp_LAB_FORCE_transition %>%
-    select(-PROB_EXIT_LF_ID, -PROB_EXIT_LF, -END) %>%
+    select(
+      -PROB_EXIT_LF_ID, 
+      -PROB_EXIT_LF,
+      -END
+      ) %>%
     
     # Disabled if randomly generated probability is < 0.001
-    mutate(DISABWRK_PERC = runif(dfInitSamp_LAB_FORCE_transition %>%
-                                   nrow()),
-           DISABWRK = ifelse(0.001 > DISABWRK_PERC | DISABWRK == 1, 1, 0))
+    mutate(
+      DISABWRK_PERC = runif(dfInitSamp_LAB_FORCE_transition %>% nrow()),
+      DISABWRK = ifelse(0.001 > DISABWRK_PERC | DISABWRK == 1, 1, 0)
+      )
   
   # Income growth 
   dfInitSamp_inc_growth <- dfInitSamp_LAB_FORCE_transition %>%
@@ -543,9 +634,14 @@ makeIncome_and_LF_and_Disability <- function(YEAR_NOW, dfInitSamp_divorced) {
 
   wages <- c()
   wages_df <- samps %>%
-    filter(YEAR == 2007,
-           INCWAGE > 0) %>%
-    distinct(AGE, INCWAGE) %>%
+    filter(
+      YEAR == 2007,
+      INCWAGE > 0
+      ) %>%
+    distinct(
+      AGE, 
+      INCWAGE
+      ) %>%
     arrange(AGE)
   wages_df <- wages_df %>%
     add_row(
@@ -647,19 +743,25 @@ DISTRIBUTION <- income_dist %>%
   ) %>%
   
   # MIN_TO shifts down, makes each MIN_TO equal to prev. row's MAX_TO
-  mutate(MIN_TO = lag(MAX_TO),
-         MIN_TO = ifelse(is.na(MIN_TO) | is.infinite(MIN_TO), 0, MIN_TO),
-         MAX_TO = ifelse(is.na(MAX_TO) | is.infinite(MAX_TO), 0, MAX_TO)) %>%
+  mutate(
+    MIN_TO = lag(MAX_TO),
+    MIN_TO = ifelse(is.na(MIN_TO) | is.infinite(MIN_TO), 0, MIN_TO), 
+    MAX_TO = ifelse(is.na(MAX_TO) | is.infinite(MAX_TO), 0, MAX_TO)
+    ) %>%
   
   # Join with max income
   inner_join(MAX_INCOME %>% rename(Year = REFYEAR)) %>%
-  mutate(MAX_TO = ifelse(MAX_TO > MAX_INCOME, MAX_INCOME, MAX_TO),
-         MIN_TO = ifelse(MIN_TO > MAX_INCOME, MAX_INCOME, MIN_TO)) %>%
+  mutate(
+    MAX_TO = ifelse(MAX_TO > MAX_INCOME, MAX_INCOME, MAX_TO),
+    MIN_TO = ifelse(MIN_TO > MAX_INCOME, MAX_INCOME, MIN_TO)
+    ) %>%
   
-  mutate(EXPECTED = (MIN_TO + MAX_TO)/2,
-         EXPECTED = ifelse(Income_Bracket == 'Max', 2.5 * MAX_INCOME, EXPECTED),
-         PERC_MAX = ifelse(Income_Bracket == 'Max', MAX_INCOME, EXPECTED),
-         MAX_TO = ifelse(Income_Bracket == 'Max', EXPECTED, MAX_TO))
+  mutate(
+    EXPECTED = (MIN_TO + MAX_TO)/2,
+    EXPECTED = ifelse(Income_Bracket == 'Max', 2.5 * MAX_INCOME, EXPECTED),
+    PERC_MAX = ifelse(Income_Bracket == 'Max', MAX_INCOME, EXPECTED),
+    MAX_TO = ifelse(Income_Bracket == 'Max', EXPECTED, MAX_TO)
+    )
 
 df_econ_assumptions %>%
   filter(ALTERNATIVE %in% c(0,2)) %>%
@@ -673,17 +775,22 @@ df_econ_assumptions %>%
 distribution_maxinc <- DISTRIBUTION %>%
   filter(Year == 2022) %>%
   # Turning income brackets to relative proportions
-  mutate(MIN_TO = MIN_TO / 147000,       # Figure out what 147000 is
-         MAX_TO = MAX_TO / 147000) %>%
+  mutate(
+    MIN_TO = MIN_TO / 147000,       # Figure out what 147000 is
+    MAX_TO = MAX_TO / 147000
+    ) %>%
   select(-MAX_INCOME) %>%
   mutate(Year = list(2023:2100)) %>%
   unnest(Year) %>%
   arrange(Year) %>%
-  inner_join(MAX_INCOME %>% 
-               rename(Year = REFYEAR)) %>%
+  inner_join(
+    MAX_INCOME %>% 
+      rename(Year = REFYEAR)) %>%
   # Scaling brackets back up
-  mutate(MIN_TO = MIN_TO * MAX_INCOME,
-         MAX_TO = MAX_TO * MAX_INCOME)
+  mutate(
+    MIN_TO = MIN_TO * MAX_INCOME,
+    MAX_TO = MAX_TO * MAX_INCOME
+    )
 
 # Adding projected rows back into distribution
 DISTRIBUTION <- DISTRIBUTION %>%
@@ -743,33 +850,41 @@ matchDist <- function(year) {
     arrange(INCWAGE) %>%
     
     # Cap incomes above MAX
-    mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX, MAX, INCWAGE),
+    mutate(
+      INCWAGE_NEW = ifelse(INCWAGE > MAX, MAX, INCWAGE),
     
     # Total income retained after capping
-           PERC_TOTAL = sum(INCWAGE_NEW) / sum(INCWAGE), 
+      PERC_TOTAL = sum(INCWAGE_NEW) / sum(INCWAGE), 
     
     # Cumulative income share
-           PERC = cumsum(INCWAGE) / sum(INCWAGE), 
+      PERC = cumsum(INCWAGE) / sum(INCWAGE), 
     
     # Rank-based percentile position
-           percentile = (row_number() - 0.5) / n())
+      percentile = (row_number() - 0.5) / n
+    )
   
   # Filter for target year, compute percentile for everyone w non-zero income
   future_dist <- samps %>%
-    filter(YEAR == year,
-           INCWAGE != 0) %>%
+    filter(
+      YEAR == year, 
+      INCWAGE != 0
+      ) %>%
     arrange(INCWAGE) %>%
     mutate(percentile = (row_number() - 0.5) / n())
   
   
   # Match percentiles between distributions 
   suppressWarnings(future_dist <- future_dist %>%
-                     mutate(matched_PERC = approx(
-                       x = target_dist$percentile,
-                       y = target_dist$PERC,
-                       xout = percentile,
-                       rule = 2
-                     )$y))
+                     mutate(
+                       matched_PERC = approx(
+                         x = target_dist$percentile,
+                         y = target_dist$PERC,
+                         xout = percentile,
+                         rule = 2
+                         )$y
+                       )
+                   )
+  
   suppressWarnings(perc_to_income <- approxfun(
     x = target_dist$PERC,
     y = target_dist$INCWAGE,
@@ -778,11 +893,16 @@ matchDist <- function(year) {
   
   future_dist_adjusted <- future_dist %>%
     mutate(INCWAGE = perc_to_income(matched_PERC)) %>%
-    select(-percentile, -matched_PERC)
+    select(
+      -percentile, 
+      -matched_PERC
+      )
   
   samps %>%
-    filter(YEAR == year,
-           INCWAGE == 0) %>%
+    filter(
+      YEAR == year,
+      INCWAGE == 0
+      ) %>%
     add_row(future_dist_adjusted)
 }
 
@@ -796,7 +916,10 @@ for(i in 2008:2100) {
 
 filtered_econ_assumptions <- df_econ_assumptions %>%
   filter(ALTERNATIVE %in% c(0,2)) %>%
-  select(YEAR = REFYEAR, AWI) %>%
+  select(
+    YEAR = REFYEAR, 
+    AWI
+    ) %>%
   na.omit()
 
 # Produces table of YEAR and AWI_ADJUST
@@ -807,45 +930,94 @@ target_adjusted <- target %>%
   
   # Adjusting AWI - calculating percent difference from base year (2007)
   mutate(AWI_ADJUST = 1 + ((AWI - 40405.48) / 40405.48)) %>%
-  select(YEAR, AWI_ADJUST)
+  select(
+    YEAR, 
+    AWI_ADJUST
+    )
 
 # Target data limited to years that exist in target_adjusted
 samps <- target %>%
-  inner_join(target_adjusted, 
-             by = 'YEAR') %>%
+  inner_join(
+    target_adjusted, 
+    by = 'YEAR'
+    ) %>%
   mutate(INCWAGE = INCWAGE) %>%
   select(-AWI_ADJUST)
 
 # Calculate weights of each sample pop in the real population
 weights <- df_pop_ssa %>%
   mutate(m_not_married = m_tot - m_mar ) %>%
-  select(year, age, m_not_married) %>%
-  rename(YEAR = year, AGE = age, TOTAL_SSA = m_not_married) %>%
-  mutate(MARST = 0, SEX = 1) %>%
+  select(
+    year, 
+    age, 
+    m_not_married
+    ) %>%
+  rename(
+    YEAR = year, 
+    AGE = age, 
+    TOTAL_SSA = m_not_married
+    ) %>%
+  mutate(
+    MARST = 0, 
+    SEX = 1
+    ) %>%
   
   # Appends rows for married men
   add_row(
     df_pop_ssa %>%
-      select(year, age, m_mar) %>%
-      rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
-      mutate(MARST = 1, SEX = 1)
+      select(
+        year, 
+        age, 
+        m_mar
+        ) %>%
+      rename(
+        YEAR = year, 
+        AGE = age, 
+        TOTAL_SSA = m_mar
+        ) %>%
+      mutate(
+        MARST = 1, 
+        SEX = 1
+        )
   ) %>%
   
   # Appends rows for married women
   add_row(
     df_pop_ssa %>%
-      select(year, age, f_mar) %>%
-      rename(YEAR = year, AGE = age, TOTAL_SSA = f_mar) %>%
-      mutate(MARST = 1, SEX = 2)
+      select(
+        year, 
+        age, 
+        f_mar
+        ) %>%
+      rename(
+        YEAR = year, 
+        AGE = age, 
+        TOTAL_SSA = f_mar
+        ) %>%
+      mutate(
+        MARST = 1, 
+        SEX = 2
+        )
   ) %>%
   
   # Appends rows for unmarried women
   add_row(
     df_pop_ssa %>%
       mutate(f_not_married = f_tot - f_mar) %>%
-      select(year, age, f_not_married) %>%
-      rename(YEAR = year, AGE = age, TOTAL_SSA = f_not_married) %>%
-      mutate(MARST = 0, SEX = 2)) %>%
+      select(
+        year, 
+        age, 
+        f_not_married
+        ) %>%
+      rename(
+        YEAR = year, 
+        AGE = age, 
+        TOTAL_SSA = f_not_married
+        ) %>%
+      mutate(
+        MARST = 0, 
+        SEX = 2)
+    ) %>%
   
   # Join total population by year
   inner_join(
@@ -868,7 +1040,12 @@ weights <- df_pop_ssa %>%
   inner_join(
     samps %>%
       filter(AGE < 100) %>%
-      group_by(YEAR, AGE, MARST, SEX) %>%
+      group_by(
+        YEAR, 
+        AGE, 
+        MARST, 
+        SEX
+        ) %>%
       summarise(COUNT = n())
   ) %>%
   
@@ -883,26 +1060,43 @@ samps_w_weights <- samps %>%
   inner_join(
     df_econ_assumptions %>%
       filter(ALTERNATIVE %in% c(0,2)) %>%
-      select(YEAR = REFYEAR, AWI) %>%
+      select(
+        YEAR = REFYEAR, 
+        AWI
+        ) %>%
       na.omit()
   ) %>%
-  select(-TOTAL_SSA, -TOTAL_POP, -DISABWRK_PERC, -PERC_SSA, -PEOPLE, -SAMPS_POP, -COUNT,
-         -MEAN_INCOME, -AWI)
+  select(
+    -TOTAL_SSA, 
+    -TOTAL_POP, 
+    -DISABWRK_PERC, 
+    -PERC_SSA, 
+    -PEOPLE, 
+    -SAMPS_POP, 
+    -COUNT,
+    -MEAN_INCOME, 
+    -AWI
+    )
 
 samps_w_weights %>%
   mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
   mutate(INCWAGE = INCWAGE) %>%
-  inner_join(MAX_INCOME %>% rename(YEAR = REFYEAR)) %>%
+  inner_join(
+    MAX_INCOME %>% 
+      rename(YEAR = REFYEAR)
+    ) %>%
   
   # Caps incomes at MAX_INCOME (yearly maximum taxable)
   mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME, MAX_INCOME, INCWAGE)) %>%
   group_by(YEAR) %>%
   
   # Compute summary statistics 
-  summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
-            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0] ),
-            LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
-            N = n()) %>%
+  summarise(
+    TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
+    MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0] ),
+    LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
+    N = n()
+    ) %>%
   inner_join(
     df_pop_ssa %>%
       group_by(year) %>%
@@ -913,13 +1107,16 @@ samps_w_weights %>%
   inner_join(
     df_econ_assumptions %>%
       filter(ALTERNATIVE %in% c(0,2)) %>%
-      select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
+      select(
+        YEAR = REFYEAR, 
+        AWI, 
+        TAXABLE_PAYROLL
+        ) %>%
       na.omit()
   ) %>%
   
   # Calculate percent difference between model's total taxable payroll and SSA's
-  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL)/TOTAL) %>%
+  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL) / TOTAL) %>%
   print(n = 100)
 
-samps_w_weights %>%
-  write_rds("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Documents/Social Security Files")
+write_rds(samps_w_weights, "initial_simulation.RDS")

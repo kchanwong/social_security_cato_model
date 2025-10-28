@@ -12,9 +12,9 @@ library(forecast)
 library(DBI)
 
 set.seed(2025)
-dfSamps <- readRDS("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/initial_sim.rds") %>%
+dfSamps <- readRDS("initial_simulation.RDS") %>%
   mutate(INCWAGE = INCWAGE)
-load("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/baseline_data_prep.RData")
+load("data_prep/baseline_data_prep.RData")
 
 dfSamps %>%
   
