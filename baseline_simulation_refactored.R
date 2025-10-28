@@ -20,11 +20,13 @@ dfSamps %>%
   
   # Set incomes of those outside labor force to 0
   mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
-  mutate(INCWAGE = INCWAGE) %>% ## ?
+  mutate(INCWAGE = INCWAGE) %>% 
   
   # Joins taxable maximums
-  inner_join(MAX_INCOME %>% 
-               rename(YEAR = REFYEAR)) %>%
+  inner_join(
+    MAX_INCOME %>% 
+      rename(YEAR = REFYEAR)
+    ) %>%
   
   # Cap wages at taxable maximum
   mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME, MAX_INCOME, INCWAGE)) %>%
@@ -56,7 +58,7 @@ dfSamps %>%
       select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
       na.omit()
   ) %>%
-  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL)/TOTAL) %>%
+  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL) / TOTAL) %>%
   print(n = 100)
 
 # Keeps only non-null, unique IDs
@@ -107,9 +109,10 @@ dfSamps_joined <- dfSamps %>%
   add_row(
     dfSamps %>%
       mutate(INCWAGE = INCWAGE) %>%
-      select(ID,
-             YEAR_EARN = YEAR,
-             ANNUAL_EARNINGS = INCWAGE)
+      select(
+        ID,
+        YEAR_EARN = YEAR,
+        ANNUAL_EARNINGS = INCWAGE)
     ) 
 
 # Join birth year data, retirement data, add Full Retirement Age 
@@ -174,7 +177,7 @@ AWI <- rbind(
 )
 
 # Cost of Living Adjustment dataset merging historical and future values
-cola <- read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/cola_75_23.csv") %>%
+cola <- read.csv("cola_75_23.csv") %>%
   rename(YEAR = Year) %>%
   mutate(COLA = 1 + COLA / 100) %>%
   add_row(
@@ -203,8 +206,7 @@ econ_assumptions_refyear <- df_econ_assumptions %>%
       rename(YEAR = REFYEAR)
   
 # Convert monthly bend points to annual
-family_bend_points <- read.csv(
-  "C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/family_bend_points.csv") %>%
+family_bend_points <- read.csv("family_bend_points.csv") %>%
   mutate(across(contains('bp'), ~ . * 12)) 
 
 family_bend_points <- family_bend_points %>%
@@ -234,7 +236,7 @@ family_bend_points <- family_bend_points %>%
       )
 
 # Read in past SS bend points and project for future years using AWI
-dfBendPoint2025 <- read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/bend_point.csv") %>%
+dfBendPoint2025 <- read.csv("bend_point.csv") %>%
   rename(YEAR = year) %>%
   mutate(
     first_bp = first_bp * 12,
@@ -811,9 +813,7 @@ OLD_AGE_OUTLAYS %>%
       ifelse(is.na(AUX_BENEFITS), 0, AUX_BENEFITS)
     ) %>%
   mutate(TOTAL_OUTLAYS = OUTLAYS_OLD_AGE + AUX_BENEFITS) %>%
-  write.csv(
-    "C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/baseline.csv"
-  )
+  write.csv("baseline.csv")
 
 # Build baseline scenario 
 BASELINE <- OLD_AGE_OUTLAYS %>%
@@ -886,7 +886,7 @@ BASELINE <- OLD_AGE_OUTLAYS %>%
   print(n = 1000)
 
 dfECON <- 
-  read.csv("C:/Users/UmanaAhmed/OneDrive - Cato Institute/Social Security Files/OASI_DI_PROJ_2023.csv")
+  read.csv("OASI_DI_PROJ_2023.csv")
 
 # Test model against the SSA baseline
 BASELINE <- BASELINE %>%
