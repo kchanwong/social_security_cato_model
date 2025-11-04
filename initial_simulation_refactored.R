@@ -860,7 +860,7 @@ matchDist <- function(year) {
       PERC = cumsum(INCWAGE) / sum(INCWAGE), 
     
     # Rank-based percentile position
-      percentile = (row_number() - 0.5) / n
+      percentile = (row_number() - 0.5) / n()
     )
   
   # Filter for target year, compute percentile for everyone w non-zero income
