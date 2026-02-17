@@ -690,22 +690,22 @@ DISTRIBUTION <- income_dist %>%
   mutate(PERC = Count/Total) %>%
   mutate(
     # Get min and max bounds from bracket names
-#    MIN_TO = as.numeric(str_extract(Income_Bracket, "(?<=x)\\d+(?=_)")),
+    #    MIN_TO = as.numeric(str_extract(Income_Bracket, "(?<=x)\\d+(?=_)")),
     MIN_TO = as.numeric(str_extract(Income_Bracket, "(?<=X)\\d+(?=_)")),
     MAX_TO = as.numeric(str_extract(Income_Bracket, "(?<=_)\\d+"))) |>
-    # Handle "Max" separately - for rows where the bracket is "Max"
-    # Set MIN_TO as highest previous MAX_TO value
-    # Set MAX_TO as Inf (no upper limit)
-    # Chaneg: MAX_TO should be within each year
+  # Handle "Max" separately - for rows where the bracket is "Max"
+  # Set MIN_TO as highest previous MAX_TO value
+  # Set MAX_TO as Inf (no upper limit)
+  # Chaneg: MAX_TO should be within each year
   group_by(Year) |>
   mutate(MIN_TO = ifelse(Income_Bracket == "Max", max(MAX_TO, na.rm = TRUE), MIN_TO),
          MAX_TO = ifelse(Income_Bracket == "Max", Inf, MAX_TO)) |>
   ungroup() |>
   # Change: Delete All the Following part: 
   # MIN_TO shifts down, makes each MIN_TO equal to prev. row's MAX_TO
-#  mutate(MIN_TO = lag(MAX_TO),
-#         MIN_TO = ifelse(is.na(MIN_TO) | is.infinite(MIN_TO), 0, MIN_TO),
-#         MAX_TO = ifelse(is.na(MAX_TO) | is.infinite(MAX_TO), 0, MAX_TO)) %>%
+  #  mutate(MIN_TO = lag(MAX_TO),
+  #         MIN_TO = ifelse(is.na(MIN_TO) | is.infinite(MIN_TO), 0, MIN_TO),
+  #         MAX_TO = ifelse(is.na(MAX_TO) | is.infinite(MAX_TO), 0, MAX_TO)) %>%
   
   # Join with max income
   left_join(MAX_INCOME %>% rename(Year = REFYEAR),
@@ -744,18 +744,18 @@ distribution_maxinc <- DISTRIBUTION %>%
   arrange(Year) %>%
   # Changes: change inner_join into left_join
   left_join(MAX_INCOME %>% 
-               rename(Year = REFYEAR)) %>%
+              rename(Year = REFYEAR)) %>%
   # Scaling brackets back up
   mutate(MIN_TO = MIN_TO * MAX_INCOME,
          MAX_TO = MAX_TO * MAX_INCOME)
 
 # Adding projected rows back into distribution
 DISTRIBUTION <- DISTRIBUTION %>%
-#  add_row(distribution_maxinc)
+  #  add_row(distribution_maxinc)
   bind_rows(distribution_maxinc)
 
 # Simulating distribution of incomes for a given year
-YEAR <- 2026
+# YEAR <- 2026
 
 Make_Year_Distribution <- function(YEAR) {
   
@@ -778,6 +778,8 @@ Make_Year_Distribution <- function(YEAR) {
     if(i < N) {
       MIN <- DISTRIBUTION$MIN_TO[i]
       MAX <- DISTRIBUTION$MAX_TO[i]
+      # PERC: the percentage of people in one income bracket (from df income_dist)
+      # Generation 25000*(the pct share falling in this income bracket) RV between MIN and MAX
       INCOMES_DRAW <- round(runif(round(DISTRIBUTION$PERC[i] * 25000), MIN, MAX))
       INCOMES <- c(INCOMES, INCOMES_DRAW)
     }
@@ -790,5 +792,434 @@ Make_Year_Distribution <- function(YEAR) {
     }
   }
   INCOMES
+  # INCOMES is a income distribution of a total 25000 people
 }
 
+# INCOMES2 <- c()
+# for(i in 1:N) {
+#   MIN <- DISTRIBUTION$MIN_TO[i]
+#   MAX <- DISTRIBUTION$MAX_TO[i]
+#   INCOMES_DRAW <- round(runif(round(DISTRIBUTION$PERC[i] * 25000), MIN, MAX))
+#   INCOMES2 <- c(INCOMES2, INCOMES_DRAW)
+# }
+# INCOMESdiff <- INCOMES2 - INCOMES
+
+# INCOMESdiff <- as.data.frame(INCOMESdiff)
+
+# Load the samps now
+# samps_arrow <- open_dataset("checkpoint_data/samps_v1")
+samps <- samps_arrow |>
+  collect()
+
+# For the simplicity for testing, set year = 2026
+# year <- 2026
+
+# Creating income dist. for a given year using generated distribution, matches to sample
+matchDist <- function(year) {
+  
+  # Make target distribution
+  INC <- Make_Year_Distribution(year)
+  # INC: the income 
+  MAX <- MAX_INCOME %>% 
+    filter(REFYEAR == year) %>%
+    pull(MAX_INCOME)
+  # MAX: the maximum taxable income in that given year
+  
+  # Assign ID and sort by income
+  # Transform the INC(income distribution) into a dataframe
+  target_dist <- data.frame(ID = 1:length(INC),
+                            INCWAGE = INC) %>%
+    # Make sure the incwage is in asending order (required for cumulative income share)
+    arrange(INCWAGE) %>%
+    
+    # Cap incomes above MAX
+    mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX, MAX, INCWAGE),
+           
+           # Total income retained after capping
+           PERC_TOTAL = sum(INCWAGE_NEW) / sum(INCWAGE), 
+           
+           # Cumulative income share
+           PERC = cumsum(INCWAGE) / sum(INCWAGE), 
+           
+           # Rank-based percentile position
+           # The percentile here is determined by your ranking postion among all the people
+           # The percentile is determined by the NUMBER POSITION you ranked (E.g., 1st, 10th, 51st),
+           # instead of your absolute wage income (incwage) value
+           percentile = (row_number() - 0.5) / n())
+  
+  # Filter for target year, compute percentile for everyone w non-zero income
+  future_dist <- samps %>%
+    filter(YEAR == year,
+           INCWAGE != 0) %>%
+    # set the income wage in asending order
+    arrange(INCWAGE) %>%
+    # Generate the percentile for ranking (number position, instead of income value)
+    mutate(percentile = (row_number() - 0.5) / n())
+  
+  
+  # Match percentiles between distributions - 
+  # ** Don't fully understand what's going on here
+  suppressWarnings(future_dist <- future_dist %>%
+                     mutate(matched_PERC = approx(
+                       # percentile: rank number position percentile
+                       # reference input
+                       x = target_dist$percentile,
+                       # PERC: Cumulative income share percentage
+                       # reference output (what p maps to)
+                       y = target_dist$PERC,
+                       # Use the percentile for rank position in future_dist for projection
+                       # percentile: the input we want to have in this position
+                       # always input -> output: input is percentile(rank), and output is PERC(CDF)
+                       xout = percentile,
+                       rule = 2
+                       # If a percentile falls outside the range, use the nearest boundary value (extrapolation)
+                     )$y
+                     # Extracts just the interpolated y-values from the result
+                     ))
+  # perc_to_income: use the relationship of PERC - incwage in target_dist, to generate the incwage
+  # based on given PERC (CDF of incwage) 
+  # projection of target_dist onto other dataframe, in a way of function
+  suppressWarnings(perc_to_income <- approxfun(
+    # x: input var/independent var --- PERC
+    x = target_dist$PERC,
+    # y: 
+    y = target_dist$INCWAGE,
+    # Extrapolation rule
+    rule = 2
+  ))
+  
+  # Notes: Interpretation on approx
+  #  approx(
+  # x = [independent/input variable from reference],
+  # y = [dependent/output variable from reference],
+  # xout = [new input values you want to map]
+  # )$y
+  
+  # approxfun(): create a function for approx() that can be repeated
+  # --- create a project relation using given input (x) and given outpu(y)
+  # A function of new input: approxfun(x), treat x as input and therefore generate the output
+  
+  future_dist_adjusted <- future_dist %>%
+    mutate(INCWAGE = perc_to_income(matched_PERC)) %>%
+    select(-percentile, -matched_PERC)
+  
+  samps %>%
+    filter(YEAR == year,
+           INCWAGE == 0) %>%
+    # add_row(future_dist_adjusted)
+    bind_rows(future_dist_adjusted)
+}
+
+target <- matchDist(2007)
+
+for(i in 2008:2100) {
+  print(i)
+  target <- target %>%
+    bind_rows(matchDist(i))
+  # add_row(matchDist(i))
+}
+
+write_dataset(target, path = "checkpoint_data/target_v1_0217")
+target_arrow <- open_dataset("checkpoint_data/target_v1_0217")
+
+# Start with target as a parquet data
+
+filtered_econ_assumptions <- df_econ_assumptions %>%
+  filter(ALTERNATIVE %in% c(0,2)) %>%
+  select(YEAR = REFYEAR, AWI) %>%
+  na.omit()
+
+#### ====== TRUNK 1 (Begin) ====== ####
+target <- target_arrow %>%
+  collect()
+
+target_adjusted <- target %>%
+  group_by(YEAR) %>%
+  summarise(MEAN = mean(INCWAGE)) %>%
+  inner_join(filtered_econ_assumptions) %>%
+  # mutate(AWI_ADJUST = 1 + ((AWI - 40405.48) / 40405.48)) %>% # Hardcoded values?
+  # 40405.48: the AWI for 2007
+  mutate(AWI_ADJUST = AWI/40405.48) %>%
+  select(YEAR, AWI_ADJUST)
+
+# samps here refers to the 2nd ver of samples
+# would be noted as samps_2nd when saving as parquet
+samps <- target %>%
+  inner_join(target_adjusted, by = 'YEAR') %>%
+  mutate(INCWAGE = INCWAGE) %>%
+  select(-AWI_ADJUST)
+identical(samps, target)
+# > identical(samps, target)
+# [1] TRUE
+### Here, samps and target are basically the same dataframe
+
+write_dataset(samps, path = "checkpoint_data/samps2nd_v1_0217")
+samps2nd_arrow <- open_dataset("checkpoint_data/samps2nd_v1_0217")
+
+# pop_ssa_adjusted: dataframe for married men
+# how many married man were there at each age in each given year
+pop_ssa_adjusted_1 <- df_pop_ssa %>%
+  select(year, age, m_mar) %>%
+  # TOTAL_SSA: the total population within this category 
+  rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
+  # MARST == 1: married; SEX == 1: men
+  mutate(MARST = 1, SEX = 1)
+
+# I suppose that pop_ssa_adjusted_2 is used to mark married women
+# pop_ssa_adjusted_2 <- df_pop_ssa %>%
+#   select(year, age, m_mar) %>%
+#   rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
+#   mutate(MARST = 1, SEX = 2)
+pop_ssa_adjusted_2 <- df_pop_ssa %>%
+  select(year, age, f_mar) %>%
+  rename(YEAR = year, AGE = age, TOTAL_SSA = f_mar) %>%
+  # MARST == 1: married; SEX == 2: women
+  mutate(MARST = 1, SEX = 2)
+
+pop_ssa_grouped <- df_pop_ssa %>%
+  group_by(year) %>%
+  # TOTAL_POP is the total number of population in that year
+  summarise(TOTAL_POP = sum(total)) %>%
+  rename(YEAR = year) %>%
+  ungroup()
+
+samps <- samps2nd_arrow %>%
+  collect()
+
+samps_grouped <- samps %>%
+  group_by(YEAR) %>%
+  # The number of people in each year
+  summarise(PEOPLE = n()) %>%
+  ungroup()
+
+samps_filtered <- samps %>%
+  filter(AGE < 100) %>%
+  group_by(YEAR, AGE, MARST, SEX) %>%
+  summarise(COUNT = n()) %>%
+  ungroup()
+
+econ_assumptions_filter <- df_econ_assumptions %>%
+  filter(ALTERNATIVE %in% c(0,2)) %>%
+  select(YEAR = REFYEAR, AWI) %>%
+  na.omit()
+
+# Calculate the weights
+weights <- df_pop_ssa %>%
+  mutate(m_not_married = m_tot - m_mar,
+         f_not_married = f_tot - f_mar) %>%
+  select(year, age, m_not_married, f_not_married) %>%
+  pivot_longer(
+    cols = c("m_not_married", "f_not_married"),
+    names_to = "marst_sex",
+    values_to = "not_married"
+  ) %>%
+  mutate(SEX = case_when(
+    marst_sex == "m_not_married" ~ 1,
+    marst_sex == "f_not_married" ~ 2
+  )) %>%
+  rename(YEAR = year, 
+         AGE = age, 
+         # TOTAL_SSA = m_not_married) %>%
+         TOTAL_SSA = not_married) %>%
+  mutate(MARST = 0,
+         # SEX = 1
+  ) %>%
+  select(-marst_sex) %>%
+  #  add_row(pop_ssa_adjusted_1,
+  #          pop_ssa_adjusted_2,
+  #          .name_repair = "unique") %>%
+  bind_rows(pop_ssa_adjusted_1,
+            pop_ssa_adjusted_2) %>%
+  #  inner_join(pop_ssa_grouped) %>%
+  left_join(pop_ssa_grouped,
+            by = "YEAR") %>%
+  # PERC_SSA: the percentage of pop in each (marriage, gender, age) group, from SSA data
+  mutate(PERC_SSA = TOTAL_SSA / TOTAL_POP) %>%
+  # samps_grouped: year and number of people (no age filter) in each year in the sample
+  inner_join(samps_grouped) %>%
+  # SAMPS_POP: the people of each (marriage, gender, age) group that should have been in the samps
+  # SAMPS_POP is the projected population based on PERC_SSA and the total number of people in the samps
+  mutate(SAMPS_POP = PERC_SSA * PEOPLE) %>%
+  # samps_filter: the actual count of # of people in each (marriage, gender, age) group in the samps
+  # Notes: samps_filtered has FILTERD OUT AGE >= 100, so the total population for each year here
+  # WOULD NOT equals the TOTAL_POP
+  inner_join(samps_filtered) %>%
+  # weights: projected value / actual value
+  mutate(WEIGHTS = SAMPS_POP/COUNT)
+
+samp_w_weights <- samps %>%
+  filter(AGE < 100) %>%
+  # inner_join(weights, 
+  #            by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
+  left_join(weights, 
+            by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
+  group_by(YEAR) %>%
+  mutate(MEAN_INCOME = mean(INCWAGE)) %>%
+  ungroup() %>%
+  #  inner_join(econ_assumptions_filter) %>%
+  left_join(econ_assumptions_filter,
+            by = "YEAR") %>%
+  select(-TOTAL_SSA,
+         -TOTAL_POP,
+         -DISABWRK_PERC,
+         -PERC_SSA,
+         -PEOPLE, 
+         -SAMPS_POP, 
+         -COUNT, 
+         -MEAN_INCOME, 
+         -AWI)
+
+write_dataset(samp_w_weights, path = "checkpoint_data/samp_w_weights_v1_0217")
+samp_w_weights_arrow <- open_dataset("checkpoint_data/samp_w_weights_v1_0217")
+
+pop_ssa_grouped <- df_pop_ssa %>%
+  group_by(year) %>%
+  summarise(TOTAL = sum(total)) %>%
+  rename(YEAR = year)
+
+econ_assumptions_filtered <- df_econ_assumptions %>%
+  filter(ALTERNATIVE %in% c(0, 2)) %>%
+  select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
+  na.omit()
+
+samp_w_weights <- samp_w_weights_arrow|>
+  collect()
+
+samp_w_weights <- samp_w_weights %>% 
+  mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE),
+         INCWAGE = INCWAGE) %>%
+  inner_join(MAX_INCOME %>% rename(YEAR = REFYEAR)) %>%
+  mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME,
+                              MAX_INCOME,
+                              INCWAGE)) %>%
+  group_by(YEAR) %>%
+  summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
+            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0]),
+            LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
+            N = n()) %>%
+  inner_join(pop_ssa_grouped) %>%
+  mutate(TOTAL = (1/1e9) * TOTAL_PAYROLL * (TOTAL/N)) %>%
+  inner_join(econ_assumptions_filtered) %>%
+  mutate(PERC_DIFF = (TAXABLE_PAYROLL - TOTAL) / TOTAL) %>%
+  print(n = 100)
+
+# samps_w_weights %>%
+#   write_rds("C:/Users/kchanwong/OneDrive - Cato Institute/Documents/social_security/stand_together_reforms/simulation.RDS")
+
+
+
+#### ====== TRUNK 1 (End) ====== ####
+
+## ====== Another Different way of Generating ====== ##
+
+# Notes: Below are the codes from the dataframe "target" to "sample_w_weights".
+# It is doing basically the same thing as the previous codes, just some revision of codes 
+# to make it more efficiency. 
+# THE ONLY DIFFERENCE is that, in this version of code, it correctly calculate the number of married and 
+# single women in the df_pop_ssa, compared with the original version of codes. 
+# However, I have revised this in the latest version. 
+# Therefore, for this latest version of codes, the codes below, "TRUNK 2" , line 1124 - 1225,
+# should be doing the same thing as the codes above, "TRUNK 1", line 932 - 1111 
+
+#### ====== TRUNK 2 (Begin) ====== ####
+samps <- target%>%
+  inner_join(
+    target %>%
+      group_by(YEAR) %>%
+      summarise(MEAN = mean(INCWAGE)) %>%
+      inner_join(
+        df_econ_assumptions %>%
+          filter(ALTERNATIVE %in% c(0,2)) %>%
+          select(YEAR = REFYEAR, AWI) %>%
+          na.omit()
+      ) %>%
+      mutate(AWI_ADJUST = 1 + ((AWI - 40405.48)/40405.48)) %>%
+      select(YEAR, AWI_ADJUST),
+    by = 'YEAR'
+  ) %>%
+  mutate(INCWAGE = INCWAGE) %>%
+  select(-AWI_ADJUST)
+
+weights <- df_pop_ssa %>%
+  mutate(m_not_married = m_tot - m_mar ) %>%
+  select(year, age, m_not_married) %>%
+  rename(YEAR = year, AGE = age, TOTAL_SSA = m_not_married) %>%
+  mutate(MARST = 0, SEX = 1) %>%
+  add_row(
+    df_pop_ssa %>%
+      select(year, age, m_mar) %>%
+      rename(YEAR = year, AGE = age, TOTAL_SSA = m_mar) %>%
+      mutate(MARST = 1, SEX = 1)
+  ) %>%
+  add_row(
+    df_pop_ssa %>%
+      select(year, age, f_mar) %>%
+      rename(YEAR = year, AGE = age, TOTAL_SSA = f_mar) %>%
+      mutate(MARST = 1, SEX = 2)
+  ) %>%
+  add_row(
+    df_pop_ssa %>%
+      mutate(f_not_married = f_tot - f_mar) %>%
+      select(year, age, f_not_married) %>%
+      rename(YEAR = year, AGE = age, TOTAL_SSA = f_not_married) %>%
+      mutate(MARST = 0, SEX = 2)) %>%
+  inner_join(
+    df_pop_ssa %>%
+      group_by(year) %>%
+      summarise(TOTAL_POP = sum(total)) %>%
+      rename(YEAR = year)
+  ) %>%
+  mutate(PERC_SSA = TOTAL_SSA/TOTAL_POP) %>%
+  inner_join(
+    samps %>%
+      group_by(YEAR) %>%
+      summarise(PEOPLE = n())
+  ) %>%
+  mutate(SAMPS_POP = PERC_SSA * PEOPLE) %>%
+  inner_join(
+    samps %>%
+      filter(AGE < 100) %>%
+      group_by(YEAR, AGE, MARST, SEX) %>%
+      summarise(COUNT = n())
+  ) %>%
+  mutate(WEIGHTS = SAMPS_POP/COUNT)
+
+samps_w_weights <- samps %>%
+  filter(AGE < 100) %>%
+  inner_join(weights, by = c('YEAR', 'AGE', 'SEX', 'MARST')) %>%
+  group_by(YEAR) %>%
+  mutate(MEAN_INCOME = mean(INCWAGE)) %>%
+  inner_join(
+    df_econ_assumptions %>%
+      filter(ALTERNATIVE %in% c(0,2)) %>%
+      select(YEAR = REFYEAR, AWI) %>%
+      na.omit()
+  ) %>%
+  select(-TOTAL_SSA, -TOTAL_POP, -DISABWRK_PERC, -PERC_SSA, -PEOPLE, -SAMPS_POP, -COUNT,
+         -MEAN_INCOME, -AWI)
+samps_w_weights %>%
+  mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
+  mutate(INCWAGE = INCWAGE) %>%
+  inner_join(MAX_INCOME %>% rename(YEAR = REFYEAR)) %>%
+  mutate(INCWAGE_NEW = ifelse(INCWAGE > MAX_INCOME, MAX_INCOME, INCWAGE)) %>%
+  group_by(YEAR) %>%
+  summarise(TOTAL_PAYROLL = sum(INCWAGE_NEW * WEIGHTS),
+            MEAN = mean(INCWAGE[INCWAGE > 0] * WEIGHTS[INCWAGE > 0] ),
+            LFPR = sum(WEIGHTS[LABFORCE == 1])/sum(WEIGHTS),
+            N = n()) %>%
+  inner_join(
+    df_pop_ssa %>%
+      group_by(year) %>%
+      summarise(TOTAL = sum(total)) %>%
+      rename(YEAR = year)
+  ) %>%
+  mutate(TOTAL = (1/1e9) * TOTAL_PAYROLL * (TOTAL/N)) %>%
+  inner_join(
+    df_econ_assumptions %>%
+      filter(ALTERNATIVE %in% c(0,2)) %>%
+      select(YEAR = REFYEAR, AWI, TAXABLE_PAYROLL) %>%
+      na.omit()
+  ) %>%
+  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL)/TOTAL) %>%
+  print(n = 100)
+#### ====== TRUNK 2 (End) ====== ####
