@@ -84,7 +84,7 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
     )
   
   widows2_df1 <- dfInitSamps_deaths %>%
-    ungroup() |>
+    ungroup() %>%
     # DEAD is household-level and >= 1 means someone in the household has died
     # MARST: Married Status, MARST == 1 -> married, spouse present
     filter(MARST == 1 & DEAD >= 1) %>%
@@ -93,23 +93,23 @@ makeDemographic_Project <- function(YEAR_NOW, dfInitSamps) {
     # the dead person's personal number would be the spouse-pernum for their spouse
     select(ID, DEAD, SERIAL,
            PERNUM_SP = PERNUM)
-  widows2 <- dfInitSamps_deaths |>
+  widows2 <- dfInitSamps_deaths %>%
     # only keep the widowed people who:
     # (1) are in the same household as the dead
     # (2) their spouse-pm is the same as the pernum of the dead
     semi_join(widows2_df1,
-              by = c("SERIAL", "PERNUM_SP")) |> 
+              by = c("SERIAL", "PERNUM_SP")) %>%
     # mutate new "widowed" info
     mutate(WIDOWED = 1)
   
-  dfInitSamp_deaths_w_widow <- dfInitSamps_deaths |>
+  dfInitSamp_deaths_w_widow <- dfInitSamps_deaths %>%
     # delete original record of the new widowed people
     anti_join(widows2,
-              by = "ID") |>
+              by = "ID") %>%
     # add the edited info for the new widowed
-    bind_rows(widows2) |>
+    bind_rows(widows2) %>%
     # Keep only alive individuals
-    filter(DEAD == 0) |>
+    filter(DEAD == 0) %>%
     # Update marital status if widowed 
     mutate(
       WIDOWED = ifelse(is.na(WIDOWED),  0L, WIDOWED),
@@ -743,9 +743,6 @@ for(i in 2008:2100) {
 t2 <- Sys.time()
 t2 - t1
 
-write_dataset(samps, path = "test1_checkpoint_data/samps_ref_v1",
-              existing_data_behavior = "overwrite")
-samps_arrow <- open_dataset("test1_checkpoint_data/samps_ref_v1")
 
 # Income distribution - with brackets and percent distributions
 DISTRIBUTION <- income_dist %>%
@@ -769,16 +766,16 @@ DISTRIBUTION <- income_dist %>%
     # MIN_TO: extract the floor value within each income bracket
     MIN_TO = as.numeric(str_extract(Income_Bracket, "(?<=X)\\d+(?=_)")),
     # MAX_TO: extract the cell value within each income bracket
-    MAX_TO = as.numeric(str_extract(Income_Bracket, "(?<=_)\\d+"))) |>
+    MAX_TO = as.numeric(str_extract(Income_Bracket, "(?<=_)\\d+"))) %>%
   
   # Handle "Max" separately - for rows where the bracket is "Max"
   # Set MIN_TO as highest previous MAX_TO value
   # Set MAX_TO as Inf (no upper limit)
   # Change: MAX_TO should be within each year
-  group_by(Year) |>
+  group_by(Year) %>%
   mutate(MIN_TO = ifelse(Income_Bracket == "Max", max(MAX_TO, na.rm = TRUE), MIN_TO),
-         MAX_TO = ifelse(Income_Bracket == "Max", Inf, MAX_TO)) |>
-  ungroup() |>
+         MAX_TO = ifelse(Income_Bracket == "Max", Inf, MAX_TO)) %>%
+  ungroup() %>%
   # Change: Delete some lines of codes: 
   # The following parts are not required if the floor value within each income bracket has been extracted
   # with the correct regular expression originally (in 763)
@@ -865,11 +862,6 @@ Make_Year_Distribution <- function(YEAR) {
   }
   INCOMES
 }
-
-# Load the samps now
-# samps_arrow <- open_dataset("checkpoint_data/samps_v1")
-# samps <- samps_arrow |>
-#   collect()
 
 # Aligns income distribution in a given year with a target distribution
 # For specific year, constructs capped income distribution (based on MAX_INCOME)
@@ -987,9 +979,6 @@ for(i in 2008:2100) {
     bind_rows(matchDist(i))
 }
 
-write_dataset(target, path = "test1_checkpoint_data/target_ref_v1",
-              existing_data_behavior = "overwrite")
-target_arrow <- open_dataset("test1_checkpoint_data/target_ref_v1")
 
 filtered_econ_assumptions <- df_econ_assumptions %>%
   filter(ALTERNATIVE %in% c(0,2)) %>%
@@ -1027,12 +1016,6 @@ samps <- target %>%
 # [1] TRUE
 ### Here, samps and target are basically the same dataframe
 
-write_dataset(samps, path = "test1_checkpoint_data/samps2nd_ref_v1",
-              existing_data_behavior = "overwrite")
-samps2nd_arrow <- open_dataset("test1_checkpoint_data/samps2nd_ref_v1")
-
-# samps <- samps2nd_arrow %>%
-#   collect()
 
 # pop_ssa_adjusted: dataframe for married men
 # pop_ssa_adjusted_1: married men
@@ -1141,14 +1124,95 @@ samps_w_weights <- samps %>%
     -AWI
   )
 
-write_dataset(samps_w_weights, path = "test1_checkpoint_data/samps_w_weights_ref_v1",
-              existing_data_behavior = "overwrite")
-samp_w_weights_arrow <- open_dataset("test1_checkpoint_data/samps_w_weights_ref_v1")
+## UNIT TEST ====
 
-# samp_w_weights <- samp_w_weights_arrow|>
-#   collect()
+### AWI =====
 
-samps_w_weights %>%
+# AWI data is in the df_econ_assumption
+
+sampletest_df1 <- samps_w_weights %>%
+  select(ID, YEAR, SERIAL, INCWAGE, WEIGHTS)
+
+awi_df <- df_econ_assumptions %>%
+  filter(ALTERNATIVE %in% c(0,2)) %>%
+  select(REFYEAR, AWI) %>%
+  na.omit() %>%
+  rename(YEAR = REFYEAR)
+
+awi_sample <- sampletest_df1 %>%
+  select(ID,YEAR, INCWAGE, WEIGHTS) %>%
+  distinct() %>%
+  filter(INCWAGE > 0) %>% 
+  group_by(YEAR) %>%
+  summarise(avgwage = weighted.mean(INCWAGE, WEIGHTS)) %>%
+  ungroup() 
+
+awi_test_df1 <- awi_df %>%
+  inner_join(awi_sample,
+             by = "YEAR") %>%
+  mutate(awi_diff = (avgwage - AWI)/AWI) %>%
+  print(n = 100)
+
+awi_test_df2 <- awi_test_df1 %>%
+  filter(abs(awi_diff) > 0.05) %>%
+  print()
+# We have the following 8 years where the difference between AWI and average wage is larger than 5%
+
+#  YEAR   AWI  avgwage  awi_diff
+#  2007 40405.  38022.  -0.0590
+#  2012 44322.  41854.  -0.0557
+#  2015 48099.  45673.  -0.0504
+#  2017 50322.  47771.  -0.0507
+#  2019 54100.  51100.  -0.0555
+#  2020 55629.  52190.  -0.0618
+#  2021 60575.  55785.  -0.0791
+#  2022 63468.  60007.  -0.0545
+
+# However, there are mostly under 6%. So the difference is not very large (slightly larger than 5%)
+
+mean(awi_test_df1$awi_diff)
+# -0.02102165
+# The average difference is 2.10%
+
+
+### Maximum Taxable Income ==== 
+
+# Maximum Taxable Income is in the MAX_INCOME
+
+sampletest_df1 <- samps_w_weights %>%
+  select(ID, YEAR, SERIAL, INCWAGE, WEIGHTS)
+
+mtinc_test_df2 <- sampletest_df1 %>%
+  left_join(MAX_INCOME %>%
+              rename(YEAR = REFYEAR),
+            by = "YEAR") %>%
+  filter(INCWAGE > 0) %>%
+  group_by(YEAR) %>%
+  summarise(mt_pct = weighted.mean(INCWAGE > MAX_INCOME, WEIGHTS)) %>%
+  print(n= 100)
+
+mtinc_test_df2 <- sampletest_df1 %>%
+  left_join(MAX_INCOME %>%
+              rename(YEAR = REFYEAR),
+            by = "YEAR") %>%
+  mutate(mt = if_else(
+    INCWAGE > MAX_INCOME, 1, 0
+  )) %>%
+  filter(INCWAGE > 0) %>%
+  group_by(YEAR) %>%
+  summarise(npop = n(),
+            nmt = sum(mt)) %>%
+  mutate(mt_pct = nmt/npop) %>%
+  print(n = 100) 
+# In the simulated sample with weights that we have generated: 
+# Before 2021, around 6% of people within those with a wage (income > 0) earn more than the maximum taxable income
+# After 2021, around 7% of people earn more than the maximum taxable income
+# In general, 6% - 7% of the people with a wage earn more than the maximum taxable income in the simulated sample,
+# which aligns with the actual data in real life.
+
+### Taxable Payroll Test =====
+
+payroll_test <- samps_w_weights %>%
   mutate(INCWAGE = ifelse(LABFORCE == 0, 0, INCWAGE)) %>%
   mutate(INCWAGE = INCWAGE) %>%
   inner_join(
@@ -1186,8 +1250,7 @@ samps_w_weights %>%
   ) %>%
   
   # Calculate percent difference between model's total taxable payroll and SSA's
-  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL) / TOTAL) %>%
+  mutate(PERC_DIFF = (TAXABLE_PAYROLL-TOTAL) / TOTAL) 
+
+payroll_test %>%
   print(n = 100)
-
-
-
