@@ -38,8 +38,8 @@ test_that("Share of earners above maximum taxable income is 6-7%", {
     )
   
   offenders <- res %>%
-    mutate(avg_mt_pct = mean(mt_pct)) |>
-    distinct(avg_mt_pct) |>
+    mutate(avg_mt_pct = mean(mt_pct)) %>%
+    distinct(avg_mt_pct) %>%
     mutate(
       avg_mt_pp   = 100 * avg_mt_pct,
       gap_low_pp  = 100 * pmax(0, 0.06 - avg_mt_pct),  
