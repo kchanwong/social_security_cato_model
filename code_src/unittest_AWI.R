@@ -50,10 +50,10 @@ test_that("Average wage matches SSA AWI within 5%", {
   
   offenders <- res %>%
     mutate(mean_avgwage = mean(avgwage),
-           mean_AWI = mean(AWI)) |>
-    select(mean_avgwage, mean_AWI) |>
-    distinct() |>
-    mutate(mean_awi_diff = (mean_avgwage - mean_AWI)/mean_AWI) |>
+           mean_AWI = mean(AWI)) %>%
+    select(mean_avgwage, mean_AWI) %>%
+    distinct() %>%
+    mutate(mean_awi_diff = (mean_avgwage - mean_AWI)/mean_AWI) %>%
     mutate(
       deviation = abs(mean_awi_diff),
       gap = deviation - 0.05
