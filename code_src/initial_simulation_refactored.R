@@ -863,6 +863,11 @@ Make_Year_Distribution <- function(YEAR) {
   INCOMES
 }
 
+# Load the samps now
+# samps_arrow <- open_dataset("checkpoint_data/samps_v1")
+# samps <- samps_arrow |>
+#   collect()
+
 # Aligns income distribution in a given year with a target distribution
 # For specific year, constructs capped income distribution (based on MAX_INCOME)
 # Matches individuals' income percentiles to target
@@ -1124,6 +1129,8 @@ samps_w_weights <- samps %>%
     -AWI
   )
 
+write_rds(samps_w_weights, "initial_simulation_v1.RDS")
+
 ## UNIT TEST ====
 
 ### AWI =====
@@ -1182,19 +1189,19 @@ mean(awi_test_df1$awi_diff)
 sampletest_df1 <- samps_w_weights %>%
   select(ID, YEAR, SERIAL, INCWAGE, WEIGHTS)
 
-mtinc_test_df2 <- sampletest_df1 %>%
+mtinc_test_df2 <- sampletest_df1 |>
   left_join(MAX_INCOME %>%
               rename(YEAR = REFYEAR),
-            by = "YEAR") %>%
+            by = "YEAR") |>
   filter(INCWAGE > 0) %>%
   group_by(YEAR) %>%
-  summarise(mt_pct = weighted.mean(INCWAGE > MAX_INCOME, WEIGHTS)) %>%
+  summarise(mt_pct = weighted.mean(INCWAGE > MAX_INCOME, WEIGHTS)) |>
   print(n= 100)
 
-mtinc_test_df2 <- sampletest_df1 %>%
+mtinc_test_df2 <- sampletest_df1 |>
   left_join(MAX_INCOME %>%
               rename(YEAR = REFYEAR),
-            by = "YEAR") %>%
+            by = "YEAR") |>
   mutate(mt = if_else(
     INCWAGE > MAX_INCOME, 1, 0
   )) %>%
@@ -1202,7 +1209,7 @@ mtinc_test_df2 <- sampletest_df1 %>%
   group_by(YEAR) %>%
   summarise(npop = n(),
             nmt = sum(mt)) %>%
-  mutate(mt_pct = nmt/npop) %>%
+  mutate(mt_pct = nmt/npop) |>
   print(n = 100) 
 # In the simulated sample with weights that we have generated: 
 # Before 2021, around 6% of people within those with a wage (income > 0) earn more than the maximum taxable income
