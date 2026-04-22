@@ -20,6 +20,10 @@ t1 <- Sys.time()
 years <- 2008:2100
 results <- vector("list", length(years))
 current_year_data <- dfInitSamps
+### Using Census Fertility Projections, What Happens? 
+TFR_PROJECTIONS <- read.csv("C:/Users/kchanwong/Documents/TFR_PROJ_DIFF_SOURCE.csv")
+dfFert06_08 <- normalize_tfr(dfFert06_08, TFR_PROJECTIONS %>% select(YEAR, 
+                                TARGET_TFR = CENSUS), proj_start = 2025)
 # Loop through each year 2008-2100 and apply functions
 for(i in seq_along(years)) {
   year <- years[i]
@@ -51,4 +55,5 @@ for(i in 2008:2100) {
     # add_row(matchDist(i))
     bind_rows(matchDist(i))
 }
-
+target %>%
+  write_rds("C:/Users/kchanwong/Documents/GitHub/social_security_cato_model/counterfactual/census.rds")

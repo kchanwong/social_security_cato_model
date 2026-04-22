@@ -23,14 +23,25 @@ AVG_BENE_DI_WORKER      = 1580.79 * BENE_SCALE_FACTOR
 AVG_BENE_DI_SPOUSE      =  431.66 * BENE_SCALE_FACTOR
 AVG_BENE_DI_CHILD       =  509.19 * BENE_SCALE_FACTOR
 
-# Scenario-specific AIME drift calibrated to ±0.5 pp of TR2025 Table IV.B1 OASDI cost rates.
+# Scenario-specific AIME drift calibrated to keep OASDI cost/income/balance
+# rates within ±0.5 pp of TR2025 Table VI.G2 for all three scenarios.
 #
 # intermediate: 5-phase — breaks 2033/2049/2065/2075
-#               phases [0.003, 0.007, 0.005, 0.001, 0.009]
-# low_cost:     4-phase — phases [0.0005, 0.011, 0.013, 0.014], breaks [2033, 2055, 2075]
-# high_cost:    4-phase — phases [0.006, 0.001, -0.006, 0.002], breaks [2042, 2059, 2079]
-#               + blended scaler 1.0→int_ref over 2025-2034 (see compute_scalers)
-# DI drift = 0.67 × retired drift; Aux drift = 0.50 × retired drift
+#   retired [0.003, 0.007, 0.005, 0.001, 0.009]
+#   Balance fixed by TOB ramp 0.000350/yr in trust_fund.py.
+#
+# low_cost: 4-phase — breaks 2033/2055/2075
+#   retired [0.0005, 0.011, 0.013, 0.014]
+#   Income gap (−0.33 pp) closed by TOB base boost (+0.022) in trust_fund.py.
+#
+# high_cost: 5-phase — breaks 2042/2059/2069/2079
+#   retired [0.006, 0.001, −0.0065, −0.0054, 0.002]
+#   Phase-3 split at 2069: steeper drop 2060-2069 creates headroom so the
+#   shallower 2070-2079 pulls 2079 cost back inside ±0.5 pp without pushing
+#   the 2085-2092 phase-4 costs over the upper bound.
+#   Balance fixed by TOB ramp 0.000392/yr in trust_fund.py.
+#
+# DI drift ≈ 0.67 × retired drift; Aux drift ≈ 0.50 × retired drift
 def _aime_drift_retired(year):
     import assumptions as _asm
     sc = _asm.SCENARIO
@@ -42,7 +53,8 @@ def _aime_drift_retired(year):
     elif sc == "high_cost":
         if year <= 2042:   return 0.006
         elif year <= 2059: return 0.001
-        elif year <= 2079: return -0.006
+        elif year <= 2069: return -0.0065  # phase 3a: steeper to create headroom
+        elif year <= 2079: return -0.0054  # phase 3b: shallower to lift 2079 cost
         else:              return 0.002
     else:  # intermediate or custom
         if year <= 2033:   return 0.003
@@ -62,7 +74,8 @@ def _aime_drift_di(year):
     elif sc == "high_cost":
         if year <= 2042:   return 0.00402
         elif year <= 2059: return 0.00067
-        elif year <= 2079: return -0.00402
+        elif year <= 2069: return -0.004355
+        elif year <= 2079: return -0.003618
         else:              return 0.00134
     else:  # intermediate
         if year <= 2033:   return 0.00201
@@ -82,7 +95,8 @@ def _aime_drift_aux(year):
     elif sc == "high_cost":
         if year <= 2042:   return 0.003
         elif year <= 2059: return 0.0005
-        elif year <= 2079: return -0.003
+        elif year <= 2069: return -0.00325
+        elif year <= 2079: return -0.0027
         else:              return 0.001
     else:  # intermediate
         if year <= 2033:   return 0.00150

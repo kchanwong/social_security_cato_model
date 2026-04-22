@@ -6,7 +6,17 @@ Usage:
     python3 main.py
     python3 main.py --scenario low_cost
     python3 main.py --scenario high_cost
-    python3 main.py --tfr 1.5   # custom flat TFR (intermediate econ)
+
+    python3 main.py --tfr 1.5
+        # flat TFR of 1.5 for all years (intermediate econ/mortality)
+
+    python3 main.py --tfr-series "2025:1.4,2035:1.7,2050:1.9,2099:1.9"
+        # custom node path; linearly interpolated between nodes.
+        # values outside the node range are clamped to the nearest endpoint.
+
+    python3 main.py --tfr-file my_tfr.csv
+        # CSV with columns 'year' and 'tfr' (one row per node).
+        # same interpolation as --tfr-series.
 """
 
 import sys
@@ -20,22 +30,76 @@ parser.add_argument("--scenario", default="intermediate",
                     choices=["intermediate","low_cost","high_cost","custom"],
                     help="Actuarial scenario (default: intermediate)")
 parser.add_argument("--tfr", type=float, default=None,
-                    help="Custom flat TFR to use (overrides scenario TFR nodes). "
-                         "Forces --scenario=custom if provided.")
+                    help="Custom flat TFR for all years. Forces --scenario=custom.")
+parser.add_argument("--tfr-series", default=None,
+                    help='TFR node path as "year:value,year:value,..." '
+                         'e.g. "2025:1.4,2040:1.7,2099:1.9". '
+                         'Linearly interpolated between nodes. '
+                         'Forces --scenario=custom.')
+parser.add_argument("--tfr-file", default=None,
+                    help="CSV file with columns [year, tfr] defining TFR nodes "
+                         "(linearly interpolated). Forces --scenario=custom.")
 parser.add_argument("--calibrate", action="store_true", default=True,
                     help="Print calibration diagnostics (default: True)")
 parser.add_argument("--no-calibrate", dest="calibrate", action="store_false")
 args = parser.parse_args()
 
-# ── Handle custom TFR ─────────────────────────────────────────────────────────
+# ── Validate: at most one TFR override ────────────────────────────────────────
+tfr_flags = sum(x is not None for x in [args.tfr, args.tfr_series, args.tfr_file])
+if tfr_flags > 1:
+    parser.error("Specify at most one of --tfr, --tfr-series, --tfr-file.")
+
+# ── Build custom TFR nodes dict (if any override supplied) ────────────────────
+import assumptions as _asm
+
+def _apply_tfr_nodes(nodes: dict):
+    """Validate, print, and inject node dict into TFR_NODES['custom']."""
+    if not nodes:
+        parser.error("TFR node dict is empty — check your input.")
+    print("[main.py] Custom TFR nodes: "
+          + ", ".join(f"{y}:{v:.3f}" for y, v in sorted(nodes.items())))
+    _asm.TFR_NODES["custom"] = nodes
+
 if args.tfr is not None:
-    import assumptions as _asm
-    custom_tfr = args.tfr
-    # Inject a flat custom TFR path into assumptions
-    _asm.TFR_NODES["custom"] = {yr: custom_tfr for yr in
-                                 list(_asm.TFR_NODES["intermediate"].keys())}
+    # Flat path: same value at every standard node year
+    nodes = {yr: args.tfr for yr in _asm.TFR_NODES["intermediate"]}
+    _apply_tfr_nodes(nodes)
     args.scenario = "custom"
-    print(f"[main.py] Custom TFR: {custom_tfr:.2f} (flat, all years)")
+    print(f"[main.py] Mode: flat TFR = {args.tfr:.2f} (all years)")
+
+elif args.tfr_series is not None:
+    # Inline series: "2025:1.4,2035:1.7,2050:1.9"
+    try:
+        nodes = {}
+        for token in args.tfr_series.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            yr_str, val_str = token.split(":")
+            nodes[int(yr_str.strip())] = float(val_str.strip())
+    except ValueError as exc:
+        parser.error(f"Could not parse --tfr-series: {exc}. "
+                     'Expected format: "2025:1.4,2040:1.7,2099:1.9"')
+    _apply_tfr_nodes(nodes)
+    args.scenario = "custom"
+    print("[main.py] Mode: TFR series from --tfr-series")
+
+elif args.tfr_file is not None:
+    # CSV file: must have columns 'year' and 'tfr'
+    try:
+        df_tfr = pd.read_csv(args.tfr_file)
+        df_tfr.columns = [c.strip().lower() for c in df_tfr.columns]
+        if "year" not in df_tfr.columns or "tfr" not in df_tfr.columns:
+            parser.error(f"--tfr-file must have columns 'year' and 'tfr'. "
+                         f"Found: {list(df_tfr.columns)}")
+        nodes = {int(r["year"]): float(r["tfr"]) for _, r in df_tfr.iterrows()}
+    except FileNotFoundError:
+        parser.error(f"--tfr-file not found: {args.tfr_file}")
+    except Exception as exc:
+        parser.error(f"Could not read --tfr-file: {exc}")
+    _apply_tfr_nodes(nodes)
+    args.scenario = "custom"
+    print(f"[main.py] Mode: TFR series from file '{args.tfr_file}'")
 
 SCENARIO = args.scenario
 
@@ -146,6 +210,26 @@ print(f"  OASDI: {exh['oasdi']}")
 print(f"\n{'='*65}")
 print(f"  Pipeline complete — scenario: {SCENARIO}")
 print(f"{'='*65}\n")
+
+# ── Export rates CSV ──────────────────────────────────────────────────────────
+import os, pathlib
+
+if args.tfr_file is not None:
+    # Strip directory and extension: "path/to/my_tfr.csv" → "my_tfr"
+    csv_stem = pathlib.Path(args.tfr_file).stem
+elif args.tfr_series is not None:
+    csv_stem = "tfr_series"
+elif args.tfr is not None:
+    csv_stem = f"tfr_{args.tfr:.3f}".replace(".", "p")
+else:
+    csv_stem = SCENARIO
+
+out_name = f"TFR_PROJ_{csv_stem}.csv"
+rates_df = tf[["oasdi_income_rate", "oasdi_cost_rate", "oasdi_net_rate"]].copy()
+rates_df.index.name = "year"
+rates_df.columns = ["income_rate", "cost_rate", "balance_rate"]
+rates_df.to_csv(out_name)
+print(f"[main.py] Rates CSV written → {out_name}\n")
 
 # ── Return results dict (for import usage) ────────────────────────────────────
 results = {
