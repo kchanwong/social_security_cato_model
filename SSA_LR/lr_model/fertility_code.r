@@ -2,7 +2,9 @@
 library(fixest)
 library(dplyr)
 library(httr2)
-library(wbstats)   # fallback — same data, more reliable
+library(wbstats)   
+
+
 
 # ── OECD country codes ────────────────────────────────────────────────────────
 oecd_iso3 <- c(
@@ -79,8 +81,6 @@ oecd_tfr <- tryCatch(
 )
 
 # Quick check
-glimpse(oecd_tfr)
-oecd_tfr %>% count(country) %>% print(n = 40)
 
 # ── 4. Beta-convergence ───────────────────────────────────────────────────────
 # Regress 10-year change in TFR on lagged TFR level
@@ -169,8 +169,11 @@ us_resid_plot <- oecd_tfr %>%
   theme_minimal(base_size = 13)
 
 print(us_resid_plot)
-
-
+setwd("C:/Users/kchanwong/Documents/SSA_LR/csvs")
+ oecd_tfr %>%
+  filter(iso3 == "USA") %>%
+  select(country, year, resid, tfr) %>%
+  write.csv("fig_2.csv")
 
 
 
@@ -383,7 +386,7 @@ net <- tibble(
   change_pct = NA_real_
 )
 library(scales)
-
+offset_table %>% select(age_group, change) %>% write.csv('table_1.csv')
 offset_table %>%
   bind_rows(net) %>%
   mutate(
@@ -433,7 +436,7 @@ sources <- c("CBO_PROJ", "SSA_PROJ", "UN_PROJ", "CENSUS")
 labels  <- c("CBO", "SSA", "UN", "German Path", "Census Bureau")
 colors  <- c("#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd")
 ltypes  <- c(1, 1, 1, 2, 1)  # 2 = dashed for German Path
-
+df %>% select(-UN_PROJ) %>% na.omit() %>% write.csv('fig_1.csv')
 # Set up plot area
 plot(
   df$YEAR, df$SSA_PROJ,
@@ -511,7 +514,6 @@ for (i in seq_len(nrow(raw))) {
 cbo <- bind_rows(results)
 CBO_TOTAL <- cbo %>% group_by(Year) %>% summarise(Total = (1/1e6) * sum(Total))
 
-cbo  %>% tail(1)
 # ── 3. UN World Population Prospects ─────────────────────────────────────────
 # ── 4. SSA Trustees Report 2025 (Table V.A3) — Intermediate scenario only ────
 # The sheet stacks Historical → Intermediate → Low-cost → High-cost sections.
@@ -543,11 +545,13 @@ for (i in seq_len(nrow(ssa_raw))) {
 }
 
 ssa <- do.call(rbind, ssa_rows)
-
+library(tidyr)
 # ── Combine — focus on 2020 onward for context ────────────────────────────────
-all_pop <- bind_rows(census, CBO_TOTAL %>% rename(Pop = 'Total') %>% mutate(Source = 'CBO'), un, ssa) %>%
-  filter(Year >= 2020)
-
+all_pop <- bind_rows(census,
+CBO_TOTAL %>% rename(Pop = 'Total') %>% mutate(Source = 'CBO'), ssa) %>%
+  filter(Year >= 2020) %>%
+  pivot_wider(names_from = Source, values_from = Pop)
+all_pop %>% write.csv('figure_4.csv')
 # ── Plot ──────────────────────────────────────────────────────────────────────
 sources <- c("Census Bureau", "CBO",  "SSA")
 colors  <- c("Census Bureau" = "#9467bd",
@@ -558,7 +562,7 @@ ltypes  <- c("Census Bureau" = 1, "CBO" = 2, "SSA" = 1)
 plot(
   NA,
   xlim = range(all_pop$Year),
-  ylim = range(all_pop$Pop, na.rm = TRUE),
+  ylim = range(unlist(all_pop[, sources], use.names = FALSE), na.rm = TRUE),
   xlab = "Year",
   ylab = "Population (millions)",
   main = "U.S. Population Projections by Source",
@@ -574,8 +578,7 @@ text(2026, par("usr")[4] * 0.99, "Projections \u2192",
      adj = c(0, 1), cex = 0.75, col = "grey40")
 
 for (s in sources) {
-  sub <- all_pop[all_pop$Source == s, ]
-  lines(sub$Year, sub$Pop,
+  lines(all_pop$Year, all_pop[[s]],
         col = colors[s], lty = ltypes[s], lwd = 1.8)
 }
 
@@ -596,7 +599,7 @@ census_raw <- read.csv(path_census) %>%
 
 census_dep <- census_raw %>%
   mutate(
-    pop_25_64 = rowSums(across(all_of(paste0("POP_", 25:64)))),
+    pop_25_64 = rowSums(across(all_of(paste0("POP_", 20:64)))),
     pop_65p   = rowSums(across(all_of(paste0("POP_", 65:100)))),
     DepRatio  = pop_65p / pop_25_64
   ) %>%
@@ -605,7 +608,7 @@ census_dep <- census_raw %>%
 
 # ── 2. CBO Figure 3: invert (25–64)/(65+) → (65+)/(25–64) ───────────────────
 cbo_dep <- cbo %>% group_by(Year) %>% 
-    summarise(DepRatio = sum(Total[Age %in% 65:100])/sum(Total[Age %in% 25:64])) %>%
+    summarise(DepRatio = sum(Total[Age %in% 65:100])/sum(Total[Age %in% 20:64])) %>%
     mutate(Source = 'CBO')
 
 
@@ -636,7 +639,8 @@ ssa_dep <- do.call(rbind, ssa_rows)
 
 # ── Combine ───────────────────────────────────────────────────────────────────
 all_dep <- bind_rows(census_dep, cbo_dep, ssa_dep) %>%
-  filter(Year >= 2020)
+  filter(Year >= 2020) %>%
+  pivot_wider(names_from = Source, values_from = DepRatio)
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
 sources <- c("Census Bureau", "CBO", "SSA")
@@ -649,7 +653,7 @@ labels  <- c("Census Bureau" = "Census (65+ / 25\u201364)",
 plot(
   NA,
   xlim = range(all_dep$Year),
-  ylim = range(all_dep$DepRatio, na.rm = TRUE),
+  ylim = range(unlist(all_dep[, sources], use.names = FALSE), na.rm = TRUE),
   xlab = "Year",
   ylab = "Old-Age Dependency Ratio",
   main = "U.S. Old-Age Dependency Ratio Projections by Source",
@@ -664,8 +668,7 @@ text(2026, par("usr")[4] * 0.99, "Projections \u2192",
      adj = c(0, 1), cex = 0.75, col = "grey40")
 
 for (s in sources) {
-  sub <- all_dep[all_dep$Source == s, ]
-  lines(sub$Year, sub$DepRatio, col = colors[s], lty = ltypes[s], lwd = 1.8)
+  lines(all_dep$Year, all_dep[[s]], col = colors[s], lty = ltypes[s], lwd = 1.8)
 }
 
 legend("topleft",
@@ -678,3 +681,11 @@ legend("topleft",
 
 mtext("Note: SSA V.A3 only publishes 20\u201364 as working-age group; cannot match CBO's 25\u201364 cutoff.",
       side = 1, line = 4, cex = 0.68, col = "grey40", adj = 0)
+### ER ####
+dfCBO_PROJ <- read.csv('C:/Users/kchanwong/Documents/GitHub/social_security_cato_model/SSA_LR/lr_model/python/TFR_PROJ_CBO_TFR.csv')
+dfCENSUS_PROJ <- read.csv('C:/Users/kchanwong/Documents/GitHub/social_security_cato_model/SSA_LR/lr_model/python/TFR_PROJ_CENSUS_TFR.csv')
+dfSSA_PROJ <- read.csv('C:/Users/kchanwong/Documents/GitHub/social_security_cato_model/SSA_LR/lr_model/python/TFR_PROJ_intermediate.csv') %>% 
+  na.omit()
+plot(dfCBO_PROJ$year, dfSSA_PROJ$balance_rate, type = 'l', lwd = 3, ylim = c(-10, 0))
+lines(dfCBO_PROJ$year, dfCBO_PROJ$balance_rate,  lwd = 3, col = 'darkgreen')
+lines(dfCBO_PROJ$year, dfCENSUS_PROJ$balance_rate,  lwd = 3, col = 'darkred')
