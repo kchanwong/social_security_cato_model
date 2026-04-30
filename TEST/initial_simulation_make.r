@@ -1,38 +1,46 @@
 library(ipumsr)
 library(dplyr)
-setwd("C:/Users/kchanwong/Documents/TEST")
+setwd("C:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST")
 set_ipums_api_key("", save = TRUE)
-extract <- define_extract_micro(
-  description = "ACS 2008 synthetic pop base",
-  samples     = "us2008a",
-  collection = 'usa',
-  variables   = c(
-    "SERIAL",
-    "HHWT",
-    "PERNUM",
-    "PERWT",
-    "FAMUNIT",
-    "SCHOOL",
-    "AGE",
-    "SEX",
-    "EDUC",
-    'INCSS',
-    "LABFORCE",
-    "EMPSTAT",
-    "INCWAGE",
-    "WORKEDYR"
-  )
-)
-submitted <- submit_extract(extract)
-downloadable <- wait_for_extract(submitted)
-files <- download_extract(downloadable, download_dir = "C:/Users/kchanwong/Documents/TEST")
-raw <- read_ipums_micro("C:/Users/kchanwong/Documents/TEST/usa_00176.xml")
+# extract <- define_extract_usa(
+#   description = "ACS 2008 synthetic pop base",
+#   samples     = "us2008a",
+#   variables   = c(
+#     "SERIAL",
+#     "HHWT",
+#     "PERNUM",
+#     "PERWT",
+#     "FAMUNIT",
+#     "SCHOOL",
+#     "AGE",
+#     "SEX",
+#     "EDUC",
+#     'INCSS',
+#     "LABFORCE",
+#     "EMPSTAT",
+#     "INCWAGE",
+#     "WORKEDYR",
+#     'MARST', 
+#     'RELATE'
+#   )
+# )
+# submitted <- submit_extract(extract)
+# downloadable <- wait_for_extract(submitted)
+# files <- download_extract(downloadable, overwrite =  TRUE, download_dir = "C:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST")
+
+raw <- read_ipums_micro("usa_00179.xml")
 acs <- raw |>
   transmute(
     serial  = SERIAL,
     famunit = paste0(SERIAL, "_", FAMUNIT),
     perwt   = PERWT,
     hhwt    = HHWT,
+    marst = case_when(
+      MARST %in% c(1,2,3) ~ 'married',
+      MARST == 4 ~ 'divorced',
+      MARST == 5 ~ 'widowed',
+      MARST == 6 ~ 'single'
+    ),
     age = AGE,
     school = case_when(
       SCHOOL == 1 ~ "no",
@@ -64,9 +72,15 @@ acs <- raw |>
     ),
     incwage = if_else(INCWAGE %in% c(999998, 999999), NA_real_, as.double(INCWAGE)),
     receive_ss = ifelse(INCSS %in% c(999998, 999999) | INCSS == 0, "no", "yes"),
-    cohort = ((2008 - AGE) %/% 10) * 10
+    cohort = ((2008 - AGE) %/% 10) * 10,
+    relate = case_when(
+      RELATE == 1 ~ "head",
+      RELATE == 2 ~ "spouse",
+      RELATE == 3 ~ "child",
+      RELATE == 9 ~ "grandchild",
+      TRUE        ~ "other_adult"
+    )
   )
-
 res_tbl <- acs |>
   group_by(famunit) |>
   summarise(
@@ -128,6 +142,7 @@ sim_pop %>%
     )
   ))) %>%
   mutate(
+    year = 2008,
     ped = ifelse(employed == "yes" & age > 18 & incwage > 0, log(incwage+1) - log(predict_hat), 0))  %>%
     write.csv('initial_simulation.csv', row.names = FALSE)
 
