@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(Rscript -e ' *)",
+      "Bash(awk -F',' 'NR>1 {y=$1; a=$2; if \\(y+a==2008\\) print a}' \"c:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST/death_probability.csv\")",
+      "Bash(awk -F',' 'NR>1 {gsub\\(/\"/, \"\", $4\\); y=$1; a=$2; p=$5; if \\(y+a==2008 && a>=40 && a<=76\\) print p}' \"c:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST/death_probability.csv\")"
+    ]
+  }
+}
