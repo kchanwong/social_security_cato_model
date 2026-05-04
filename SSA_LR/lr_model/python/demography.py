@@ -11,6 +11,7 @@ run_demography() → dict with keys:
   working_age_pop : Series     ages 20-64 total (thousands)
 """
 
+import os
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
@@ -19,6 +20,27 @@ from assumptions import (
     MORTALITY_ULT_REDUCTION, MORTALITY_ULTIMATE_YEAR,
     get_tfr_annual, get_lpr_annual, get_tup_annual,
 )
+
+# ── SSA TR2024 Alt2 period life tables ────────────────────────────────────────
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data')
+
+def _load_ssa_period_lt():
+    """Load SSA TR2024 Alt2 q(x) arrays keyed by {year: {sex: array[101]}}."""
+    out = {}
+    for sex, fname in [(0, 'PerLifeTables_M_Alt2_TR2024.csv'),
+                       (1, 'PerLifeTables_F_Alt2_TR2024.csv')]:
+        path = os.path.join(_DATA_DIR, fname)
+        df = pd.read_csv(path, skiprows=4)
+        df = df[df['x'] <= 100].copy()
+        for yr, grp in df.groupby('Year'):
+            arr = grp.sort_values('x')['q(x)'].values[:101].copy()
+            arr[100] = 1.0   # open age group — everyone dies at 100
+            arr = np.minimum(arr, 0.9999)
+            arr[100] = 1.0
+            out.setdefault(int(yr), {})[sex] = arr
+    return out
+
+_SSA_QX = _load_ssa_period_lt()
 
 AGES = np.arange(101)   # 0 … 100
 SEX_M, SEX_F = 0, 1
@@ -87,8 +109,6 @@ def build_base_qx():
     mx_f = a_f + b_f * np.exp(c_f * AGES)
     qx_m = np.minimum(1 - np.exp(-mx_m), 0.9999)
     qx_f = np.minimum(1 - np.exp(-mx_f), 0.9999)
-
-    # Manual infant/child overrides
     infant_m = [0.0051,0.00033,0.00022,0.00016,0.00013,
                 0.00010,0.00008,0.00008,0.00009,0.00011,
                 0.00013,0.00015,0.00019,0.00028,0.00045,
@@ -99,11 +119,11 @@ def build_base_qx():
                 0.00041,0.00051,0.00059,0.00065,0.00069]
     qx_m[:20] = infant_m
     qx_f[:20] = infant_f
-    return np.stack([qx_m, qx_f], axis=1)   # shape (101, 2)
+    return np.stack([qx_m, qx_f], axis=1)
 
 
 def annual_mortality_reduction(year, scenario=SCENARIO):
-    """Proportion reduction in m(x) for each age group this year."""
+    """Proportion reduction in m(x) for each age group this year (parametric fallback)."""
     ult  = MORTALITY_ULT_REDUCTION[scenario]
     ult_yr = MORTALITY_ULTIMATE_YEAR[scenario]
     frac = np.clip((year - BASE_POP_YEAR) / (ult_yr - BASE_POP_YEAR), 0, 1)
@@ -113,7 +133,7 @@ def annual_mortality_reduction(year, scenario=SCENARIO):
 
 
 def step_qx(qx, year, scenario=SCENARIO):
-    """Advance q(x) by one year of mortality improvement."""
+    """Advance q(x) by one year of mortality improvement (parametric for all scenarios)."""
     reductions = annual_mortality_reduction(year, scenario)
     new_qx = np.zeros_like(qx)
     for sex in [SEX_M, SEX_F]:
@@ -312,9 +332,9 @@ def calibrate(results):
     print(pd.DataFrame(rows).to_string(index=False))
     max_err = max(abs(r["pop_%diff"]) for r in rows)
     if max_err > 3.0:
-        print(f"  ⚠ Max pop deviation {max_err:.1f}% exceeds 3% — recalibrate base pop.")
+        print(f"  [!] Max pop deviation {max_err:.1f}% exceeds 3% -- recalibrate base pop.")
     else:
-        print(f"  ✓ Max pop deviation: {max_err:.2f}%")
+        print(f"  [ok] Max pop deviation: {max_err:.2f}%")
 
 # =============================================================================
 # ENTRY POINT

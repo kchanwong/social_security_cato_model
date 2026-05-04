@@ -254,133 +254,91 @@ makeBabies <- function(YEAR_NOW, dfInitSamp_new_units) {
 # Returns updated population with new marital statuses
 
 makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
-  
-  # Estimate the men who will be married in year t+1 
-  # Identify eligible single men (age 18-70, not widowed)
+
+  # Cache SSA year data once (was filtered 3 separate times)
+  ssa_year <- df_pop_ssa %>% filter(year == YEAR_NOW)
+
   singleMen <- dfInitSamp_babies %>%
-    filter(
-      SEX == 1, 
-      MARST == 0, 
-      WIDOWED == 0, 
-      AGE %in% c(18:70)
-    ) %>%
-    arrange(AGE)
-  
-  # Estimate % of unmarried men by age, compare with SSA data
+    filter(SEX == 1, MARST == 0, WIDOWED == 0, between(AGE, 18, 70))
+
   marriage_gap <- dfInitSamp_babies %>%
     group_by(AGE) %>%
-    summarise(PERC_MARRIED = mean(MARST == 1)) %>%
+    summarise(PERC_MARRIED = mean(MARST == 1), .groups = "drop") %>%
     left_join(
-      df_pop_ssa %>%
-        filter(year == YEAR_NOW) %>%
-        mutate(marry_perc = m_mar / m_tot) %>%
-        select(
-          AGE = age, 
-          MARRY_PERC_ACTUAL = marry_perc
-        ),
-      by = 'AGE'
+      ssa_year %>% transmute(AGE = age, MARRY_PERC_ACTUAL = m_mar / m_tot),
+      by = "AGE"
     ) %>%
-    # Find difference between in-sample marriage percentage and SSA projected
-    mutate(MARRY_PERC = MARRY_PERC_ACTUAL - PERC_MARRIED) %>%
-    mutate(MARRY_PERC = 
-             ifelse(MARRY_PERC < 0, 0, MARRY_PERC)
-    ) %>%
-    select(AGE, MARRY_PERC)
-  
-  # Join gap data to men and assign marriage decision
-  men_with_marry_prob <- singleMen %>% 
+    transmute(AGE, MARRY_PERC = pmax(0, MARRY_PERC_ACTUAL - PERC_MARRIED))
+
+  men_with_marry_prob <- singleMen %>%
     inner_join(marriage_gap, by = "AGE") %>%
-    mutate( 
-      PR_NOT_MARRY = runif(n()),
-      MARRY = ifelse(PR_NOT_MARRY <= MARRY_PERC, 1, 0)
-    )
-  
-  # Find the likelihood of a single woman to be married
+    mutate(MARRY = as.integer(runif(n()) <= MARRY_PERC))
+
   single_women <- dfInitSamp_babies %>%
-    filter(
-      SEX == 2,
-      MARST == 0,
-      WIDOWED == 0, 
-      AGE %in% 18:70
-    ) %>%
+    filter(SEX == 2, MARST == 0, WIDOWED == 0, between(AGE, 18, 70)) %>%
     left_join(
-      df_pop_ssa %>% 
-        filter(year == YEAR_NOW) %>%
-        mutate(MARRY_PERC_FEMALE = f_mar / f_tot) %>%
-        select(
-          AGE = age, 
-          MARRY_PERC_FEMALE
-        ),
+      ssa_year %>% transmute(AGE = age, MARRY_PERC_FEMALE = f_mar / f_tot),
       by = "AGE"
     )
-  
-  # Attempt to match men who will marry with women using Euclidean distance 
-  matches <- men_with_marry_prob %>%
+
+  men_to_match <- men_with_marry_prob %>%
     filter(MARRY == 1) %>%
-    select(
-      ID, 
-      AGE, 
-      INCWAGE
-    ) %>%
-    mutate(AGE_WIN = map(AGE, ~(.x - 10):(.x + 10))) %>%
+    select(ID, AGE, INCWAGE)
+
+  wom_pool <- single_women %>%
+    select(ID_SP = ID, AGE_SP = AGE, INCWAGE_SP = INCWAGE, PERC_MARRY = MARRY_PERC_FEMALE)
+
+  # Pre-compute global scaling parameters once (avoids scale() matrix inside mutate)
+  all_lgw <- log1p(c(men_to_match$INCWAGE, wom_pool$INCWAGE_SP))
+  all_age <- c(men_to_match$AGE, wom_pool$AGE_SP)
+  lw_mean <- mean(all_lgw); lw_sd <- sd(all_lgw)
+  ag_mean <- mean(all_age); ag_sd <- sd(all_age)
+
+  men_scaled <- men_to_match %>%
+    mutate(lgw_sc  = (log1p(INCWAGE) - lw_mean) / lw_sd,
+           age_sc  = (AGE - ag_mean) / ag_sd)
+
+  wom_scaled <- wom_pool %>%
+    mutate(lgw_sp_sc = (log1p(INCWAGE_SP) - lw_mean) / lw_sd,
+           age_sp_sc = (AGE_SP - ag_mean) / ag_sd)
+
+  matches <- men_scaled %>%
+    mutate(AGE_WIN = map(AGE, ~(.x - 10L):(.x + 10L))) %>%
     unnest(AGE_WIN) %>%
-    inner_join(
-      single_women %>%
-        select(
-          ID_SP = ID,
-          AGE_SP = AGE,
-          INCWAGE_SP = INCWAGE,
-          PERC_MARRY = MARRY_PERC_FEMALE
-        ) %>%
-        rename(AGE_WIN = AGE_SP),
-      by = "AGE_WIN"
-    ) %>%
+    inner_join(wom_scaled %>% rename(AGE_WIN = AGE_SP), by = "AGE_WIN") %>%
     rename(AGE_SP = AGE_WIN) %>%
-    # Find women with lowest weighted Euc. distance based on inc and age
-    # Changes: 
-    # (1) Take log of Income (Income tends to have a long-tail distribution)
-    # (2) Standardize/Normalize both the age and the log income
-    # Reasons for the change:
-    # 1. To avoid to many "0 income" to "0 income" pairs;
-    # 2. To avoid one certain variable, age or income, affects the match too much,
-    # so that the other variable does not matter much
-    mutate(lgwage = log1p(INCWAGE),
-           lgwage_sp = log1p(INCWAGE_SP)) %>%
-    mutate(lgwage_sc = scale(lgwage),
-           lgwage_sp_sc = scale(lgwage_sp),
-           age_sc = scale(AGE),
-           age_sp_sc = scale(AGE_SP)) %>%
-    mutate(
-      DISTANCE = (1/PERC_MARRY) * sqrt(((lgwage - lgwage_sp)^2)+ (age_sc - age_sp_sc)^2)
-    ) %>%
-    filter(DISTANCE < 999999999) %>%
-    #    slice_min(DISTANCE, n = 100)
+    mutate(DISTANCE = (1 / PERC_MARRY) * sqrt((lgw_sc - lgw_sp_sc)^2 + (age_sc - age_sp_sc)^2)) %>%
     arrange(ID, DISTANCE) %>%
     group_by(ID) %>%
-    slice_min(DISTANCE, n = 5) %>%
+    slice_min(DISTANCE, n = 5, with_ties = FALSE) %>%
     ungroup()
-  
-  # Select a unique spouse for each man
-  serialID_married <- c()
-  
-  for (id in matches %>% distinct(ID) %>% pull()) {
-    id_sp <- matches %>%
-      filter(
-        ID == id, 
-        !ID_SP %in% serialID_married
-      ) %>%
-      head(1)
-    
-    if (nrow(id_sp) == 0) {
-      serialID_married <- c(serialID_married, NA)
-    } else {
-      serialID_married <- c(serialID_married, 
-                            id_sp %>% pull(ID_SP))
+
+  # Greedy unique matching with O(1) hash-set lookups — replaces O(n²) for loop
+  men_seen   <- new.env(hash = TRUE, parent = emptyenv())
+  women_seen <- new.env(hash = TRUE, parent = emptyenv())
+  n_pairs    <- nrow(matches)
+  man_out    <- integer(n_pairs)
+  woman_out  <- integer(n_pairs)
+  k          <- 0L
+
+  for (i in seq_len(n_pairs)) {
+    mk <- as.character(matches$ID[i])
+    wk <- as.character(matches$ID_SP[i])
+    if (!exists(mk, envir = men_seen,   inherits = FALSE) &&
+        !exists(wk, envir = women_seen, inherits = FALSE)) {
+      assign(mk, TRUE, envir = men_seen)
+      assign(wk, TRUE, envir = women_seen)
+      k <- k + 1L
+      man_out[k]   <- matches$ID[i]
+      woman_out[k] <- matches$ID_SP[i]
     }
   }
-  matched_ids <- matches %>% distinct(ID) %>% pull()
-  
-  # Create married men entries
+
+  # Build serialID_married aligned to arranged marrying men
+  men_marrying     <- men_with_marry_prob %>% filter(MARRY == 1) %>% arrange(ID) %>% pull(ID)
+  assignment_map   <- setNames(woman_out[seq_len(k)], man_out[seq_len(k)])
+  serialID_married <- as.integer(assignment_map[as.character(men_marrying)])
+
   married_men <- men_with_marry_prob %>%
     filter(MARRY == 1) %>%
     arrange(ID) %>%
@@ -389,128 +347,71 @@ makeMarriages_Divorced <- function(YEAR_NOW, dfInitSamp_babies) {
     left_join(
       single_women %>%
         select(-contains('SP')) %>%
-        select(
-          ID_SP = ID, 
-          PERNUM_SP = PERNUM, 
-          SSA_ID_SP = SSA_ID, 
-          INCWAGE_SP = INCWAGE,
-          LABFORCE_SP = LABFORCE, 
-          DISABWRK_SP = DISABWRK,
-          RETIRED_SP = RETIRED
-        ),
-      by = 'ID_SP'
+        select(ID_SP = ID, PERNUM_SP = PERNUM, SSA_ID_SP = SSA_ID, INCWAGE_SP = INCWAGE,
+               LABFORCE_SP = LABFORCE, DISABWRK_SP = DISABWRK, RETIRED_SP = RETIRED),
+      by = "ID_SP"
     ) %>%
-    mutate(
-      MARST = 1,
-      SAMPLE_NO = SAMPLE_NO + 1
-    )
-  
-  # Create married women entries
+    mutate(MARST = 1, SAMPLE_NO = SAMPLE_NO + 1)
+
   married_women <- single_women %>%
     filter(ID %in% serialID_married) %>%
     select(-contains('SP')) %>%
     inner_join(
       married_men %>%
-        select(
-          ID = ID_SP,
-          ID_SP = ID,
-          SERIAL_SP = SERIAL,
-          SAMPLE_NO_SP = SAMPLE_NO, 
-          PERNUM_SP = PERNUM,
-          SSA_ID_SP = SSA_ID,
-          INCWAGE_SP = INCWAGE,
-          LABFORCE_SP = LABFORCE,
-          DISABWRK_SP = DISABWRK,
-          RETIRED_SP = RETIRED
-        ),
-      by = 'ID'
+        select(ID = ID_SP, ID_SP = ID, SERIAL_SP = SERIAL, SAMPLE_NO_SP = SAMPLE_NO,
+               PERNUM_SP = PERNUM, SSA_ID_SP = SSA_ID, INCWAGE_SP = INCWAGE,
+               LABFORCE_SP = LABFORCE, DISABWRK_SP = DISABWRK, RETIRED_SP = RETIRED),
+      by = "ID"
     ) %>%
-    mutate(
-      MARST = 1,
-      RELATE = 201, 
-      PERNUM = 2,
-      SERIAL = SERIAL_SP,
-      SAMPLE_NO = SAMPLE_NO_SP
-    ) %>%
-    select(
-      -SERIAL_SP, 
-      -SAMPLE_NO_SP
-    )
-  
-  # Singles and married 
+    mutate(MARST = 1, RELATE = 201, PERNUM = 2, SERIAL = SERIAL_SP, SAMPLE_NO = SAMPLE_NO_SP) %>%
+    select(-SERIAL_SP, -SAMPLE_NO_SP)
+
   singles_and_married <- single_women %>%
     filter(!ID %in% married_women$ID) %>%
     mutate(MARST = 0) %>%
-    #    add_row(
     bind_rows(
       married_men %>%
         filter(!is.na(ID_SP)) %>%
-        select(
-          -MARRY_PERC, 
-          -MARRY, 
-          -PR_NOT_MARRY
-        ) %>%
-        mutate(MARST = 1)) %>%
-    bind_rows(
-      married_women %>%
-        select(-MARRY_PERC_FEMALE) %>%
-        mutate(MARST = 1)) %>%
+        select(-MARRY_PERC, -MARRY, -PR_NOT_MARRY) %>%
+        mutate(MARST = 1)
+    ) %>%
+    bind_rows(married_women %>% select(-MARRY_PERC_FEMALE) %>% mutate(MARST = 1)) %>%
     select(-MARRY_PERC_FEMALE)
-  
+
   dfInitSamp_married <- dfInitSamp_babies %>%
     filter(!ID %in% singles_and_married$ID) %>%
-    bind_rows(
-      singles_and_married
-    )
-  
-  # Divorce rate by age
-  div_rate_by_age <- df_pop_ssa %>%
-    filter(year == YEAR_NOW) %>%
+    bind_rows(singles_and_married)
+
+  # Divorce
+  div_rate_by_age <- ssa_year %>%
     group_by(age) %>%
-    summarise(DIV_RATE = (m_div + f_div)/total) %>%
+    summarise(DIV_RATE = (m_div + f_div) / total, .groups = "drop") %>%
     rename(AGE = age)
-  
-  # Assign uniform max divorce rate
-  max_div_rate <- max(div_rate_by_age$DIV_RATE, na.rm = TRUE)
-  
-  # Join with married individuals
-  divorcees <- dfInitSamp_married %>% 
+
+  divorcees <- dfInitSamp_married %>%
     filter(MARST == 1) %>%
-    inner_join(
-      div_rate_by_age,
-      by = c('AGE')
-    ) 
-  # Divorce rate should be unique to each age
-  # Therefore, there is no need to assign the latest divorce rate among all ages to all married population
-  # mutate(DIV_RATE = max_div_rate)
-  
-  # ** Divorcees - PUT IN MORE DETAIL
+    inner_join(div_rate_by_age, by = "AGE")
+
   divorced_spouse <- divorcees %>%
-    mutate(DIVORCE_PROB = runif(divorcees %>%
-                                  nrow())) %>%
-    filter(PERNUM == 2) %>%
-    mutate(DIVORCED = ifelse(DIV_RATE <= DIVORCE_PROB, 0, 1)) %>%
-    filter(DIVORCED == 1) %>%
+    mutate(DIVORCE_PROB = runif(n()),
+           DIVORCED     = as.integer(DIV_RATE > DIVORCE_PROB)) %>%
+    filter(PERNUM == 2, DIVORCED == 1) %>%
     mutate(SAMPLE_NO = SAMPLE_NO + 1)
-  
+
   divorced_head <- divorcees %>%
-    filter(
-      PERNUM == 1,
-      ID %in% divorced_spouse$ID_SP
-    ) %>%
+    filter(PERNUM == 1, ID %in% divorced_spouse$ID_SP) %>%
     select(-DIV_RATE) %>%
     mutate(DIVORCED = 1)
-  
-  divorced_couples <- divorced_head %>%
-    add_row(divorced_spouse %>%
-              select(-DIVORCE_PROB, -DIV_RATE))
-  
-  dfInitSamp_divorced <- dfInitSamp_married %>%  
+
+  divorced_couples <- bind_rows(
+    divorced_head,
+    divorced_spouse %>% select(-DIVORCE_PROB, -DIV_RATE)
+  )
+
+  dfInitSamp_married %>%
     filter(!ID %in% divorced_couples$ID) %>%
     mutate(DIVORCED = 0) %>%
-    add_row(divorced_couples)
-  
-  dfInitSamp_divorced
+    bind_rows(divorced_couples)
 }
 
 ## INCOME GROWTH AND LABOR FORCE --------------------

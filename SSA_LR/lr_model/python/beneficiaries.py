@@ -361,10 +361,10 @@ def calibrate_beneficiaries(cost):
     print(f"  2025 total benes: {r25['oasi_benefic_M']+r25['di_benefic_M']:.2f}M"
           f"  avg retired worker: ${r25['avg_ret_worker_mo']:.0f}/mo")
     if not (1400 <= r25["oasi_cost_bn"] <= 1530):
-        print(f"  ⚠ OASI cost ${r25['oasi_cost_bn']:.1f}B outside expected range — "
+        print(f"  [!] OASI cost ${r25['oasi_cost_bn']:.1f}B outside expected range — "
               f"adjust AIME_DRIFT_RETIRED")
     else:
-        print(f"  ✓ OASI cost in range")
+        print(f"  [ok] OASI cost in range")
 
 # =============================================================================
 # 7. ENTRY POINT

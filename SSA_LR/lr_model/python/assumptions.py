@@ -22,18 +22,12 @@ SCENARIO = "intermediate"   # "intermediate" | "low_cost" | "high_cost" | "custo
 
 # ── 1.1 Fertility (TFR) — TR2025 Table V.A1 ──────────────────────────────────
 TFR_NODES = {
-    "intermediate": {2025:1.64, 2030:1.72, 2035:1.80, 2040:1.87,
-                     2045:1.90, 2050:1.90, 2055:1.90, 2060:1.90,
-                     2065:1.90, 2070:1.90, 2075:1.90, 2080:1.90,
-                     2085:1.90, 2090:1.90, 2095:1.90, 2100:1.90},
-    "low_cost":     {2025:1.67, 2030:1.84, 2035:1.97, 2040:2.07,
-                     2045:2.10, 2050:2.10, 2055:2.10, 2060:2.10,
-                     2065:2.10, 2070:2.10, 2075:2.10, 2080:2.10,
-                     2085:2.10, 2090:2.10, 2095:2.10, 2100:2.10},
-    "high_cost":    {2025:1.59, 2030:1.54, 2035:1.55, 2040:1.58,
-                     2045:1.60, 2050:1.60, 2055:1.60, 2060:1.60,
-                     2065:1.60, 2070:1.60, 2075:1.60, 2080:1.60,
-                     2085:1.60, 2090:1.60, 2095:1.60, 2100:1.60},
+    # All paths start at 1.62 (2025 actual) and linearly interpolate to the
+    # ultimate value by 2050, then hold flat — matching SSA TR2025 Table VI.D1
+    # footnote: "ultimate total fertility rate is reached in 2050."
+    "intermediate": {2025:1.62, 2050:1.90, 2100:1.90},
+    "low_cost":     {2025:1.62, 2050:2.10, 2100:2.10},
+    "high_cost":    {2025:1.62, 2050:1.60, 2100:1.60},
 }
 
 # ── 1.2 Mortality — annual % reduction in m(x) by age group ──────────────────
@@ -115,6 +109,11 @@ UNEMPLOYMENT_ULT = {"intermediate":4.50, "low_cost":3.50, "high_cost":5.50}
 # =============================================================================
 
 REAL_INTEREST_RATE_ULT = {"intermediate":2.70, "low_cost":3.30, "high_cost":2.20}
+
+# Actuarial balance discount rate (nominal; calibrated to SSA TR2025 intermediate -3.82%).
+# "custom" inherits the intermediate rate so TFR sensitivity runs are comparable.
+ACTUARIAL_DISCOUNT_RATE = {"intermediate": 0.047, "custom": 0.047,
+                           "low_cost": 0.047, "high_cost": 0.047}
 
 # New-issue bond yield path (nominal %)
 YIELD_INTERMEDIATE = {**{y:4.1 for y in range(2025,2035)},
