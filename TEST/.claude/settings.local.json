@@ -1,10 +1,113 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
-      "Bash(python3 -c ' *)",
-      "Bash(Rscript -e ' *)",
-      "Bash(awk -F',' 'NR>1 {y=$1; a=$2; if \\(y+a==2008\\) print a}' \"c:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST/death_probability.csv\")",
-      "Bash(awk -F',' 'NR>1 {gsub\\(/\"/, \"\", $4\\); y=$1; a=$2; p=$5; if \\(y+a==2008 && a>=40 && a<=76\\) print p}' \"c:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST/death_probability.csv\")"
+      "Edit",
+      "Write",
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "Read"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/notify.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-compact.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-compact-restore.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/context-monitor.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/verify-reminder.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log-reminder.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
+  },
+  "theme": "dark",
+  "mcpServers": {
+    "mysql": {
+      "command": "C:\\Program Files\\nodejs\\npx.cmd",
+      "args": [
+        "-y",
+        "@benborla29/mcp-server-mysql"
+      ],
+      "env": {
+        "MYSQL_HOST": "state-research-do-user-16074655-0.c.db.ondigitalocean.com",
+        "MYSQL_PORT": "25060",
+        "MYSQL_USER": "doadmin",
+        "MYSQL_PASS": "YOU_CANT_VIEW_THIS",
+        "MYSQL_DB": "state_research"
+      }
+    },
+    "r-mcptools": {
+      "command": "C:\\Program Files\\R\\R-4.2.2\\bin\\x64\\Rscript.exe",
+      "args": [
+        "-e",
+        "mcptools::mcp_server()"
+      ]
+    }
+  },
+  "plansDirectory": "quality_reports/plans",
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/scripts/statusline.sh"
   }
 }

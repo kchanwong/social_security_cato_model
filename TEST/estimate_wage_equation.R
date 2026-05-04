@@ -1,18 +1,16 @@
 ### Estimate Thirty Five Year Earnings Equation ###
 ### Saves model as Python pickle via reticulate   ###
-
 library(ipumsr)
 library(dplyr)
 library(fixest)
 library(fredr)
 library(reticulate)   # for pickling
-
-setwd("C:/Users/kchanwong/Documents/TEST")
-
+# Read API Keys #
+setwd('C:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST')
+readRenviron("C:/Users/kritc/OneDrive/Documents/API_KEYS.Renviron")
 # Authenticate
-set_ipums_api_key("", save = TRUE)
-fredr_set_key("abce164b5784be00afcf9a19df04abde")
-
+set_ipums_api_key(Sys.getenv('IPUMS_API'), save = TRUE)
+fredr_set_key(Sys.getenv('FRED_API'))
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. PULL CPS ASEC DATA
 # 35 years of March CPS ASEC: income years 1975–2009
@@ -47,12 +45,11 @@ cps_extract <- define_extract_cps(
     "EMPSTAT"
   )
 )
-
 submitted   <- submit_extract(cps_extract)
 downloadable <- wait_for_extract(submitted)
-files       <- download_extract(downloadable, download_dir = "C:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST")
+files       <- download_extract(downloadable, 
+                download_dir = "C:/Users/kritc/OneDrive/Documents/GitHub/social_security_cato_model/TEST")
 raw         <- read_ipums_micro(files)
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. INFLATION ADJUSTMENT  (March CPI-U, base year = 2008)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,19 +85,11 @@ EDUC_EDIT <- raw %>%
   inner_join(MULTIPLIER_ADJUSTING, by = "YEAR") %>%
   mutate(REAL_INCWAGE = INCWAGE * MULTIPLIER_2008) %>%
   filter(REAL_INCWAGE > 4200, !is.na(EDUC_GROUPS))
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. FIT WAGE EQUATION
-# REAL_INCWAGE ~ AGE + COHORT  |  SEX + EDUC_GROUPS + RECEIVE_SS
+# log(REAL_INCWAGE) ~ AGE + COHORT  |  SEX + EDUC_GROUPS + RECEIVE_SS
 # Fixed effects absorb all between-group level differences.
 # ─────────────────────────────────────────────────────────────────────────────
-wage_model <- feols(
-  REAL_INCWAGE ~ AGE + COHORT | SEX + EDUC_GROUPS + RECEIVE_SS,
-  data    = EDUC_EDIT,
-  weights = ~ASECWT
-)
-
-
 # Re-estimate on log(REAL_INCWAGE) — CBOLT uses a log-earnings equation so that
 # the residual (PED = ln actual − ln predicted) is well-defined and symmetric.
 wage_model_log <- feols(
@@ -110,71 +99,9 @@ wage_model_log <- feols(
 )
 summary(wage_model_log)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. FULL CPS SAMPLE FOR LFP / EMPLOYMENT MODELS
-#    Uses all CPS obs with a valid labour-force status (no wage floor).
-#    Same education recodes as the wage sample; age 20–80; no Armed Forces.
-# ─────────────────────────────────────────────────────────────────────────────
-# LABFORCE codes: 1 = NILF, 2 = In LF
-# EMPSTAT codes : 10/12 = employed, 20/21 = unemployed
-CPS_FULL <- raw %>%
-  mutate(
-    EDUC_GROUPS = case_when(
-      EDUC %in%  0:73   ~ "hs",
-      EDUC %in% 80:92   ~ "some_college",
-      EDUC %in% 100:125 ~ "ba_plus",
-      .default = NA_character_
-    ),
-    YEAR_BORN  = YEAR - AGE,
-    COHORT     = (YEAR_BORN %/% 10L) * 10L,
-    RECEIVE_SS = ifelse(INCSS == 999999 | INCSS < 0, "yes", "no"),
-    IN_LF      = case_when(
-      LABFORCE == 2L ~ 1L,   # In labour force
-      LABFORCE == 1L ~ 0L,   # Not in labour force (NILF)
-      TRUE           ~ NA_integer_
-    ),
-    EMPLOYED   = case_when(
-      EMPSTAT %in% c(10L, 12L) ~ 1L,   # At work / has job, not at work
-      EMPSTAT %in% c(20L, 21L) ~ 0L,   # Unemployed (experienced / new)
-      TRUE                     ~ NA_integer_
-    )
-  ) %>%
-  filter(
-    AGE >= 20, AGE <= 80,
-    !is.na(EDUC_GROUPS),
-    EMPSTAT != 1L          # Drop Armed Forces
-  )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. FIT LFP MODEL (logistic)
-#    Pr(in labour force) ~ AGE + COHORT | SEX + EDUC_GROUPS + RECEIVE_SS
-#    Used in simulation for within-cell propensity *ranking* only —
-#    BLS / TR2025 cell-level targets set the actual rates.
-# ─────────────────────────────────────────────────────────────────────────────
-lfp_data  <- CPS_FULL %>% filter(!is.na(IN_LF))
-lfp_model <- feglm(
-  IN_LF ~ AGE + COHORT | SEX + EDUC_GROUPS + RECEIVE_SS,
-  data    = lfp_data,
-  family  = binomial(link = "logit"),
-  weights = ~ASECWT
-)
-summary(lfp_model)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7. FIT EMPLOYMENT MODEL (logistic, conditional on being in LF)
-#    Pr(employed | in LF) ~ AGE + COHORT | SEX + EDUC_GROUPS + RECEIVE_SS
-# ─────────────────────────────────────────────────────────────────────────────
-emp_data  <- CPS_FULL %>% filter(IN_LF == 1L, !is.na(EMPLOYED))
-emp_model <- feglm(
-  EMPLOYED ~ AGE + COHORT | SEX + EDUC_GROUPS + RECEIVE_SS,
-  data    = emp_data,
-  family  = binomial(link = "logit"),
-  weights = ~ASECWT
-)
-summary(emp_model)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 8. EXPORT ALL THREE MODELS AS Python PICKLE via reticulate
+# 5. EXPORT ALL THREE MODELS AS Python PICKLE via reticulate
 #
 # Python can't load feols / feglm objects natively, so we extract:
 #   • beta_age, beta_cohort   — continuous slope coefficients
@@ -187,7 +114,7 @@ summary(emp_model)
 #   wage model  : predicted_log_wage = linear_pred          (outcome = "log")
 #   LFP / emp   : Pr(yes) = sigmoid(linear_pred)
 # ─────────────────────────────────────────────────────────────────────────────
-extract_coef_dict <- function(model, outcome = "log", family = "gaussian") {
+extract_wage_coefs <- function(model) {
   betas <- coef(model)
   fe    <- fixef(model)
   list(
@@ -196,16 +123,14 @@ extract_coef_dict <- function(model, outcome = "log", family = "gaussian") {
     fixef_sex   = as.list(fe[["SEX"]]),
     fixef_educ  = as.list(fe[["EDUC_GROUPS"]]),
     fixef_ss    = as.list(fe[["RECEIVE_SS"]]),
-    outcome     = outcome,
-    family      = family,
+    outcome     = "log",
+    family      = "gaussian",
     n_obs       = as.integer(nobs(model))
   )
 }
 
 bundle <- list(
-  wage_model = extract_coef_dict(wage_model_log, outcome = "log",      family = "gaussian"),
-  lfp_model  = extract_coef_dict(lfp_model,      outcome = "binomial", family = "binomial"),
-  emp_model  = extract_coef_dict(emp_model,       outcome = "binomial", family = "binomial")
+  wage_model = extract_wage_coefs(wage_model_log)
 )
 
 # Write via Python pickle (reticulate calls the stdlib pickle — always available)
@@ -227,23 +152,23 @@ reloaded <- pickle$load(fh2)
 fh2$close()
 
 cat("\n── Pickle keys ──────────────────────────\n")
-cat("Top-level :", paste(names(reloaded), collapse = ", "), "\n")
 cat("wage keys :", paste(names(reloaded$wage_model), collapse = ", "), "\n")
 
 cat(sprintf("\nwage  β_age = %.5f   β_cohort = %.6f   n = %d\n",
             reloaded$wage_model$beta_age,
             reloaded$wage_model$beta_cohort,
             reloaded$wage_model$n_obs))
-cat(sprintf("lfp   β_age = %.5f   β_cohort = %.6f   n = %d\n",
-            reloaded$lfp_model$beta_age,
-            reloaded$lfp_model$beta_cohort,
-            reloaded$lfp_model$n_obs))
-cat(sprintf("emp   β_age = %.5f   β_cohort = %.6f   n = %d\n",
-            reloaded$emp_model$beta_age,
-            reloaded$emp_model$beta_cohort,
-            reloaded$emp_model$n_obs))
 
 cat("\nwage fixef_educ:\n")
 print(reloaded$wage_model$fixef_educ)
-cat("\nlfp  fixef_sex:\n")
-print(reloaded$lfp_model$fixef_sex)
+cat("\nwage fixef_sex:\n")
+print(reloaded$wage_model$fixef_sex)
+
+
+
+
+
+
+
+
+

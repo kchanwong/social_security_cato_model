@@ -6,9 +6,6 @@ library(DBI)
 library(readxl)
 library(ipumsr)
 ### Set Up API Keys and Database Authentication ###
-readRenviron("C:/Users/kchanwong/Documents/db_setup.Renviron")
-readRenviron("C:/Users/kchanwong/Documents/API_KEY.Renviron")
-### Set Up Database ###
 
 ###
 read_vi_g6 <- function(path) {
