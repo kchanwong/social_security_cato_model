@@ -286,14 +286,14 @@ def assign_new_lf_employment(pop: pd.DataFrame,
                               new_lf_mask: np.ndarray,
                               cell_params: dict,
                               proj_year: int,
-                              rng: np.random.Generator) -> pd.DataFrame:
+                              rng: np.random.Generator,
+                              ped_vec: np.ndarray | None = None) -> pd.DataFrame:
     """
     For people who just entered the labor force (NILF→LF this year), draw their
     initial employment status from the cell steady-state employment rate (1 - u*).
-    This avoids treating all new entrants as unemployed, which would overstate the
-    unemployment stock.
 
-    new_lf_mask : boolean array of length len(pop), True for new entrants.
+    ped_vec : optional array of PED values (len=len(pop)); when provided, the
+              drawn wage is scaled by exp(ped_i) to reflect individual quality.
     """
     idx = np.where(new_lf_mask)[0]
     if len(idx) == 0:
@@ -328,7 +328,8 @@ def assign_new_lf_employment(pop: pd.DataFrame,
             cdf   = np.cumsum(acc_probs)
             w_idx = min(np.searchsorted(cdf, draws_wage[j]), len(acc_wages) - 1)
             emp_arr[i]  = "yes"
-            wage_arr[i] = float(acc_wages[w_idx])
+            ped_scale   = float(np.exp(ped_vec[i])) if ped_vec is not None else 1.0
+            wage_arr[i] = float(acc_wages[w_idx]) * ped_scale
 
     pop["employed"] = emp_arr
     pop["incwage"]  = wage_arr
@@ -343,7 +344,8 @@ def apply_employment(pop: pd.DataFrame,
                      proj_year: int,
                      cell_params: dict,
                      wage_factors: dict,
-                     rng: np.random.Generator) -> pd.DataFrame:
+                     rng: np.random.Generator,
+                     ped_vec: np.ndarray | None = None) -> pd.DataFrame:
     """
     Apply one year of McCall employment dynamics.
 
@@ -352,7 +354,9 @@ def apply_employment(pop: pd.DataFrame,
       - If unemployed: receive offer with prob gamma; if offered wage >= w_bar
                        (scaled by wage growth), set employed='yes', incwage=wage
 
-    People outside the labor force have employed set to 'no'.
+    ped_vec : optional PED array; when provided, drawn wages are scaled by
+              exp(ped_i) so that high-PED workers receive offers reflecting
+              their permanent earnings differential.
     """
     available_years = {k[3] for k in cell_params}
     use_year        = _nearest_year(proj_year, available_years)
@@ -415,7 +419,8 @@ def apply_employment(pop: pd.DataFrame,
         cdf   = np.cumsum(acc_probs)
         w_idx = min(np.searchsorted(cdf, draws_wage[i]), len(acc_wages) - 1)
         emp_arr[i]  = "yes"
-        wage_arr[i] = float(acc_wages[w_idx])
+        ped_scale   = float(np.exp(ped_vec[i])) if ped_vec is not None else 1.0
+        wage_arr[i] = float(acc_wages[w_idx]) * ped_scale
 
     # ── NILF: force employed = no ─────────────────────────────────────────────
     nilf_mask = lf_arr != "yes"

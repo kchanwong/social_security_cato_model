@@ -13,7 +13,7 @@ import pandas as pd
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD MARRIAGE / DIVORCE RATES FROM SSA POPULATION FILE
 # ─────────────────────────────────────────────────────────────────────────────
-SSA_POP_PATH = (r"C:\Users\kchanwong\Documents\GitHub\social_security_cato_model"
+SSA_POP_PATH = (r"C:\Users\kritc\OneDrive\Documents\GitHub\social_security_cato_model"
                 r"\TEST\Data_Input\SSPopJan_TR2023 (1).csv")
 
 _BANDS     = ["15_24", "25_34", "35_44", "45_54", "55_64", "65_99"]

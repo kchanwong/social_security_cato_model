@@ -6,7 +6,7 @@ import pandas as pd
 # ─────────────────────────────────────────────────────────────────────────────
 # PATHS  (edit if running from a different directory)
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_DIR  = r"C:\Users\kchanwong\Documents\GitHub\social_security_cato_model\TEST"
+BASE_DIR  = r"C:\Users\kritc\OneDrive\Documents\GitHub\social_security_cato_model\TEST"
 DATA_DIR  = f"{BASE_DIR}/Data_Input"
 LT_M_HIST = f"{DATA_DIR}/PerLifeTables_M_Hist_TR2024.csv"
 LT_F_HIST = f"{DATA_DIR}/PerLifeTables_F_Hist_TR2024.csv"

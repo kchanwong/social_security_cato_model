@@ -15,10 +15,11 @@ Prints a year-by-year table comparing key demographic moments to SSA targets.
 """
 
 import sys
+import pickle
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, r"C:\Users\kchanwong\Documents\GitHub\social_security_cato_model\TEST\Py_file")
+sys.path.insert(0, r"C:\Users\kritc\OneDrive\Documents\GitHub\social_security_cato_model\TEST\Py_file")
 
 from death_and_births    import load_life_tables, load_income_mortality_gradient, apply_deaths, make_babies, load_asfr
 from household_formation import form_households
@@ -26,7 +27,7 @@ from mccall_employment   import (calibrate_mccall, apply_employment, wage_growth
                                   assign_new_lf_employment,
                                   _age_band as _mccall_age_band)
 
-BASE_DIR  = r"C:\Users\kchanwong\Documents\GitHub\social_security_cato_model\TEST"
+BASE_DIR  = r"C:\Users\kritc\OneDrive\Documents\GitHub\social_security_cato_model\TEST"
 RNG       = np.random.default_rng(20080101)
 BASE_YEAR = 2008
 END_YEAR  = 2024
@@ -36,10 +37,12 @@ END_YEAR  = 2024
 # ─────────────────────────────────────────────────────────────────────────────
 print("Loading static inputs ...")
 pop = pd.read_csv(f"{BASE_DIR}/Data_Output/initial_simulation.csv")
-pop["year"]        = BASE_YEAR
-pop["ped"]         = 0.0
-pop["aime"]        = 0.0
-pop["predict_hat"] = np.nan
+pop["year"]          = BASE_YEAR
+pop["ped"]           = 0.0
+pop["perm_shock"]    = 0.0
+pop["ped_initialized"] = 0
+pop["aime"]          = 0.0
+pop["predict_hat"]   = np.nan
 
 edu_trans = pd.read_csv(f"{BASE_DIR}/Data_Output/edu_transition_probs_cohort.csv")
 lt        = load_life_tables()
@@ -57,6 +60,8 @@ mccall_params = calibrate_mccall(
     n_workers  = 4,
 )
 _wage_factors = wage_growth_factors(f"{BASE_DIR}/Data_Output/wage_distributions.csv")
+with open(f"{BASE_DIR}/Data_Output/wage_model_cbo.pkl", "rb") as _f:
+    wage_model = pickle.load(_f)["wage_model"]
 # All-year average fallback for (sex, age, lf_lag) cells absent in a given year
 lf_fallback = (
     lf_trans
@@ -503,6 +508,347 @@ def _validate(pop: pd.DataFrame, ssa_yr: pd.DataFrame, year: int) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CBOLT EARNINGS MODULE  (Schwabish & Topoleski 2013, eq 9)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Figure 4 variances (σ = sqrt of the tabled variance, stratified by sex × age band)
+_PERM_SD = {
+    1: {"25_34": 0.026**0.5, "35_44": 0.024**0.5, "45_60": 0.033**0.5},
+    2: {"25_34": 0.022**0.5, "35_44": 0.020**0.5, "45_60": 0.023**0.5},
+}
+_TRANS_SD = {
+    1: {"25_34": 0.108**0.5, "35_44": 0.097**0.5, "45_60": 0.093**0.5},
+    2: {"25_34": 0.094**0.5, "35_44": 0.073**0.5, "45_60": 0.057**0.5},
+}
+# Scale factor applied to both σ_N and σ_V each year (reduce variance to limit drift).
+_CBOLT_SHOCK_SCALE = 0.5
+
+# Pareto right-tail correction for CPS top-coding: the CPS caps wages at ~$150K,
+# compressing the PED distribution for high earners.  Stretch PED values above the
+# 90th percentile by this factor at initialization so the right tail matches the
+# true (Pareto) wage distribution and TP ratio tracks SSA targets.
+_PED_PARETO_STRETCH = 1.25
+
+# SSA Average Wage Index (AWI) — nominal dollars, historical + preliminary 2024
+_AWI = {
+    2007: 40_405.48, 2008: 41_334.97, 2009: 40_711.61, 2010: 41_673.83,
+    2011: 42_979.61, 2012: 44_321.67, 2013: 44_888.16, 2014: 46_481.52,
+    2015: 48_098.63, 2016: 48_642.15, 2017: 50_321.89, 2018: 52_145.80,
+    2019: 54_099.99, 2020: 55_628.60, 2021: 60_575.07, 2022: 63_795.13,
+    2023: 66_621.80, 2024: 69_000.00,
+}
+_AWI_BASE  = _AWI[BASE_YEAR]
+_WAGE_FLOOR = 4_200.0
+
+# OASDI taxable maximum (wage base), nominal dollars
+_TAX_MAX = {
+    2009: 106_800, 2010: 106_800, 2011: 106_800, 2012: 110_100,
+    2013: 113_700, 2014: 117_000, 2015: 118_500, 2016: 118_500,
+    2017: 127_200, 2018: 128_400, 2019: 132_900, 2020: 137_700,
+    2021: 142_800, 2022: 147_000, 2023: 160_200, 2024: 168_600,
+}
+
+# SSA taxable payroll ratio (covered taxable wages / total wages) — Trustees Reports
+_SSA_TP_RATIO = {
+    2009: 0.834, 2010: 0.833, 2011: 0.832, 2012: 0.830, 2013: 0.827,
+    2014: 0.825, 2015: 0.823, 2016: 0.821, 2017: 0.820, 2018: 0.819,
+    2019: 0.818, 2020: 0.828, 2021: 0.818, 2022: 0.823, 2023: 0.822,
+    2024: 0.821,
+}
+
+# SSA % of workers above tax max — Trustees Reports (approx)
+_SSA_PCT_ABOVE_MAX = {
+    2009: 5.4, 2010: 5.4, 2011: 5.5, 2012: 5.6, 2013: 5.7,
+    2014: 5.9, 2015: 6.0, 2016: 6.1, 2017: 6.2, 2018: 6.3,
+    2019: 6.4, 2020: 5.8, 2021: 6.2, 2022: 6.5, 2023: 6.1,
+    2024: 5.9,
+}
+
+
+def _weighted_gini_topcoded(wages: np.ndarray, weights: np.ndarray,
+                             tax_max: float) -> float:
+    """
+    Gini coefficient on wages top-coded at the OASDI taxable maximum.
+    Uses trapezoidal Lorenz curve integration with survey weights.
+    """
+    v = np.minimum(wages, tax_max)
+    w = weights.astype(np.float64)
+    idx = np.argsort(v)
+    v, w = v[idx], w[idx]
+    n    = w.sum()
+    wm   = np.average(v, weights=w)
+    if wm <= 0:
+        return 0.0
+    cumW  = np.concatenate([[0.0], np.cumsum(w) / n])
+    cumX  = np.concatenate([[0.0], np.cumsum(w * v) / (n * wm)])
+    B     = float(np.dot(np.diff(cumW), (cumX[:-1] + cumX[1:]) / 2))
+    return 1.0 - 2.0 * B
+
+
+def _dist_stats(pop: pd.DataFrame, year: int) -> dict:
+    """
+    Compute wage distribution statistics for employed workers (age > 18).
+    Gini is computed on wages top-coded at the OASDI taxable maximum.
+    """
+    tax_max  = _TAX_MAX.get(year, 168_600)
+    wk       = (pop["employed"].values == "yes") & (pop["age"].values > 18)
+    if not wk.any():
+        return {}
+    wages = pop["incwage"].values[wk].astype(float)
+    wts   = pop["perwt"].values[wk].astype(float)
+
+    gini_tc  = _weighted_gini_topcoded(wages, wts, tax_max)
+    pct_over = float((wts[wages > tax_max]).sum() / wts.sum() * 100.0)
+    tp_ratio = float((wts * np.minimum(wages, tax_max)).sum() /
+                     (wts * wages).sum()) if (wts * wages).sum() > 0 else np.nan
+    return dict(
+        gini_tc=gini_tc,
+        pct_over_max=pct_over,
+        tp_ratio=tp_ratio,
+        pct_over_ssa=_SSA_PCT_ABOVE_MAX.get(year, np.nan),
+        tp_ratio_ssa=_SSA_TP_RATIO.get(year, np.nan),
+    )
+
+
+def _tp_calibrated_level_match(log_E_raw: np.ndarray, worker_mask: np.ndarray,
+                               wts: np.ndarray, year: int) -> np.ndarray:
+    """
+    Bisect on a top-tail stretch factor s so that the final wage distribution hits
+    _SSA_TP_RATIO[year] exactly, then shift the whole distribution so the weighted
+    arithmetic mean of worker wages equals SSA AWI_t.
+
+    Threshold = p90 of workers' current log wages (adapts each year).
+    For workers above threshold: log_E += (log_E - threshold) * (s - 1).
+    s = 1.0 means no additional stretch; s > 1 spreads the right tail further.
+    """
+    target_tp = _SSA_TP_RATIO.get(year)
+    tax_max   = _TAX_MAX.get(year, 168_600)
+    awi_t     = _AWI.get(year, _AWI_BASE * (1.035 ** (year - BASE_YEAR)))
+    log_awi   = np.log(awi_t)
+    w_indices = np.where(worker_mask)[0]
+    wt_w      = wts[worker_mask]
+    w_raw     = log_E_raw[worker_mask]
+    threshold = float(np.percentile(w_raw, 90))
+
+    def _evaluate(s: float) -> tuple:
+        log_s  = log_E_raw.copy()
+        excess = w_raw - threshold
+        top_m  = excess > 0
+        if s != 1.0 and top_m.any():
+            log_s[w_indices[top_m]] += excess[top_m] * (s - 1.0)
+        mean_a = np.average(np.exp(log_s[worker_mask]), weights=wt_w)
+        log_s += log_awi - np.log(mean_a)
+        wages  = np.exp(log_s[worker_mask])
+        tp     = float((wt_w * np.minimum(wages, tax_max)).sum() / (wt_w * wages).sum())
+        return tp, log_s
+
+    if target_tp is None:                    # no SSA target: AWI level-match only
+        _, out = _evaluate(1.0)
+        return out
+
+    tp0, log0 = _evaluate(1.0)
+    if abs(tp0 - target_tp) < 1e-4:
+        return log0
+
+    # tp < target → distribution too spread (too many above max) → compress (s < 1)
+    # tp > target → distribution too compressed → stretch (s > 1)
+    lo, hi = (0.0, 1.0) if tp0 < target_tp else (1.0, 10.0)
+
+    for _ in range(50):
+        mid = (lo + hi) / 2.0
+        tp_mid, log_mid = _evaluate(mid)
+        if abs(tp_mid - target_tp) < 1e-4:
+            return log_mid
+        if tp_mid < target_tp:               # too spread → compress more (lower s)
+            hi = mid
+        else:                                # too compressed → stretch more (higher s)
+            lo = mid
+
+    _, out = _evaluate((lo + hi) / 2.0)
+    return out
+
+
+def _stretch_ped_top_tail(ped_arr: np.ndarray, p90: float) -> np.ndarray:
+    """Stretch PED values above p90 by _PED_PARETO_STRETCH to recreate the Pareto right tail
+    suppressed by CPS top-coding.  Values at or below p90 are unchanged."""
+    excess = ped_arr - p90
+    top    = excess > 0
+    out    = ped_arr.copy()
+    out[top] = p90 + excess[top] * _PED_PARETO_STRETCH
+    return out
+
+
+def _predict_log_wage(wm: dict, pop: pd.DataFrame) -> np.ndarray:
+    score = (float(wm["beta_age"])    * pop["age"].values.astype(float)
+           + float(wm["beta_cohort"]) * pop["cohort"].values.astype(float))
+    fe_sex  = {str(k): float(v) for k, v in wm.get("fixef_sex",  {}).items()}
+    fe_educ = {str(k): float(v) for k, v in wm.get("fixef_educ", {}).items()}
+    fe_ss   = {str(k): float(v) for k, v in wm.get("fixef_ss",   {}).items()}
+    score += np.array([fe_sex .get(str(int(s)), 0.0) for s in pop["sex"].values])
+    score += np.array([fe_educ.get(str(e),      0.0) for e in pop["educ"].values])
+    score += np.array([fe_ss  .get(str(s),      0.0) for s in pop["receive_ss"].values])
+    return score
+
+
+def _cbolt_age_grp(ages: np.ndarray) -> np.ndarray:
+    return np.where(ages < 35, "25_34", np.where(ages < 45, "35_44", "45_60"))
+
+
+def build_ped_donors(pop: pd.DataFrame, wm: dict, p90: float | None = None) -> dict:
+    """
+    PED donor pools by (sex, educ) from base-year employed workers ages 21-31.
+    If p90 is provided, applies Pareto right-tail stretching for CPS top-coding correction.
+    Returns {(sex_int, educ_str): np.ndarray of residuals}.
+    """
+    pred = _predict_log_wage(wm, pop)
+    worker_mask = ((pop["employed"].values == "yes") &
+                   (pop["incwage"].values   >  _WAGE_FLOOR) &
+                   (pop["age"].values       >  18))
+    donor_mask  = worker_mask & pop["age"].between(21, 31).values
+    donors: dict = {}
+    for sv in [1, 2]:
+        for ev in ["hs", "some_college", "ba_plus"]:
+            m   = donor_mask & (pop["sex"].values == sv) & (pop["educ"].values == ev)
+            m_s = donor_mask & (pop["sex"].values == sv)   # sex-only fallback
+            if m.sum() > 0:
+                pool = np.log(pop["incwage"].values[m]) - pred[m]
+            elif m_s.sum() > 0:
+                pool = np.log(pop["incwage"].values[m_s]) - pred[m_s]
+            else:
+                pool = np.array([0.0])
+            if p90 is not None:
+                pool = _stretch_ped_top_tail(pool, p90)
+            donors[(sv, ev)] = pool
+    return donors
+
+
+def init_ped(pop: pd.DataFrame, wm: dict, donors: dict,
+             p90: float | None = None) -> tuple:
+    """
+    Base-year PED (e_i) initialization.  Returns (ped, initialized).
+
+    Career started (initialized=1):
+      - Current workers: e_i = ln(w) - ln(ŵ), optionally Pareto-stretched above p90
+      - Non-workers age >= 22: draw from (already-stretched) donor pool
+    Career not yet started (initialized=0):
+      - Age < 22, not currently employed: e_i = 0, drawn at first LF entry
+    """
+    pred        = _predict_log_wage(wm, pop)
+    ped         = np.zeros(len(pop))
+    initialized = np.zeros(len(pop), dtype=np.int8)
+
+    worker_mask = ((pop["employed"].values == "yes") &
+                   (pop["incwage"].values   >  _WAGE_FLOOR) &
+                   (pop["age"].values       >  18))
+    raw = np.log(pop["incwage"].values[worker_mask]) - pred[worker_mask]
+    ped[worker_mask] = _stretch_ped_top_tail(raw, p90) if p90 is not None else raw
+    initialized[worker_mask] = 1
+
+    # Non-workers with career started (age >= 22): draw from (already-stretched) donor pool
+    career_nw = (~worker_mask) & (pop["age"].values >= 22)
+    for sv in [1, 2]:
+        for ev in ["hs", "some_college", "ba_plus"]:
+            m = career_nw & (pop["sex"].values == sv) & (pop["educ"].values == ev)
+            if m.sum() > 0:
+                pool = donors.get((sv, ev), donors.get((sv, "hs"), np.array([0.0])))
+                ped[m] = RNG.choice(pool, size=m.sum(), replace=True)
+                initialized[m] = 1
+
+    return ped, initialized
+
+
+def redraw_ped_on_upgrade(pop: pd.DataFrame, upgrade_mask: np.ndarray,
+                          donors: dict) -> tuple:
+    """
+    Education upgrade → fresh e_i draw from (sex, new_educ) donor pool.
+    Also resets perm_shock to 0: education upgrade starts a fresh earnings trajectory.
+    Returns (new_ped, new_perm_shock).
+    """
+    ped        = pop["ped"].values.copy()
+    perm_shock = pop["perm_shock"].values.copy()
+    for sv in [1, 2]:
+        for ev in ["some_college", "ba_plus"]:
+            m = upgrade_mask & (pop["sex"].values == sv) & (pop["educ"].values == ev)
+            if m.sum() > 0:
+                pool = donors.get((sv, ev), np.array([0.0]))
+                ped[m]        = RNG.choice(pool, size=m.sum(), replace=True)
+                perm_shock[m] = 0.0
+    return ped, perm_shock
+
+
+def update_wages_cbolt(pop: pd.DataFrame, wm: dict, year: int) -> pd.DataFrame:
+    """
+    Annual CBOLT earnings update (Schwabish & Topoleski 2013, eq 9).
+
+    ln E_it = ln(Ê_it) + e_i + p_it + v_it
+
+      e_i   = pop["ped"]        — permanent differential, fixed at career start
+      p_it  = pop["perm_shock"] — accumulated permanent shock (random walk)
+      v_it  = beta drawn here   — transitory shock, iid each year
+
+    p_it ← p_{i,t-1} + α·σ_N   [random walk accumulates each year employed]
+    AWI level-match: shift entire distribution so weighted arithmetic mean of
+    worker wages equals SSA AWI_t.
+    """
+    pop      = pop.copy()
+    pred_log = _predict_log_wage(wm, pop)
+
+    worker_mask = (pop["employed"].values == "yes") & (pop["age"].values > 18)
+    ages    = pop["age"].values
+    age_grp = _cbolt_age_grp(ages)
+    n       = len(pop)
+    alpha   = np.zeros(n)   # permanent shock increment ε_it
+    beta_v  = np.zeros(n)   # transitory shock v_it
+
+    for sv in [1, 2]:
+        sx = pop["sex"].values == sv
+        for ag in ["25_34", "35_44", "45_60"]:
+            m = worker_mask & sx & (age_grp == ag)
+            if m.sum() == 0:
+                continue
+            alpha[m]  = RNG.standard_normal(m.sum()) * _PERM_SD[sv][ag]  * _CBOLT_SHOCK_SCALE
+            beta_v[m] = RNG.standard_normal(m.sum()) * _TRANS_SD[sv][ag] * _CBOLT_SHOCK_SCALE
+
+    # p_it accumulates permanent shocks (random walk); e_i never changes here
+    pop["perm_shock"] = pop["perm_shock"].values + alpha
+
+    log_E_raw = pred_log + pop["ped"].values + pop["perm_shock"].values + beta_v
+
+    # TP-calibrated level-match: bisect top-tail stretch to hit SSA TP ratio,
+    # then shift so weighted arithmetic mean of worker wages = SSA AWI_t.
+    if worker_mask.sum() > 0:
+        log_E_raw = _tp_calibrated_level_match(
+            log_E_raw, worker_mask, pop["perwt"].values, year
+        )
+
+    new_wages              = np.exp(log_E_raw)
+    wage_arr               = pop["incwage"].values.copy().astype(float)
+    wage_arr[ worker_mask] = np.maximum(new_wages[worker_mask], _WAGE_FLOOR)
+    wage_arr[~worker_mask] = 0.0
+    pop["incwage"]         = wage_arr
+    return pop
+
+
+# ── One-time base-year PED (e_i) initialization ──────────────────────────────
+print("Initializing CBOLT PED from base-year wage residuals ...")
+# Pre-compute raw worker PED to get the global p90 threshold for Pareto stretching
+_raw_pred = _predict_log_wage(wage_model, pop)
+_wm_p90   = ((pop["employed"].values == "yes") &
+             (pop["incwage"].values   >  _WAGE_FLOOR) &
+             (pop["age"].values       >  18))
+_raw_ped  = np.log(pop["incwage"].values[_wm_p90]) - _raw_pred[_wm_p90]
+_PED_P90  = float(np.percentile(_raw_ped, 90))
+print(f"  PED p90 threshold = {_PED_P90:.3f}  (stretch={_PED_PARETO_STRETCH}x above this)")
+
+ped_donors = build_ped_donors(pop, wage_model, p90=_PED_P90)
+pop["ped"], init_flags = init_ped(pop, wage_model, ped_donors, p90=_PED_P90)
+pop["ped_initialized"]  = init_flags
+workers_init = ((pop["employed"] == "yes") & (pop["age"] > 18)).sum()
+print(f"  PED initialized: {workers_init:,} workers  "
+      f"mean={pop['ped'].mean():.3f}  sd={pop['ped'].std():.3f}  "
+      f"n_uninitialized={int((pop['ped_initialized']==0).sum()):,}")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN PROJECTION LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 results = []
@@ -517,10 +863,16 @@ for proj_year in range(BASE_YEAR + 1, END_YEAR + 1):
     pop["year"]  = proj_year
 
     # 2a. Graduation draw (age 22): one-time cohort attainment assignment
+    educ_before = pop["educ"].values.copy()
     pop = _assign_graduation_educ(pop, proj_year)
 
     # 2b. Annual education transitions (marginal late-starters)
     pop = _apply_edu_transitions(pop, proj_year)
+
+    # 2c. Education upgrade → fresh e_i draw + reset perm_shock
+    upgrade_mask = pop["educ"].values != educ_before
+    if upgrade_mask.any():
+        pop["ped"], pop["perm_shock"] = redraw_ped_on_upgrade(pop, upgrade_mask, ped_donors)
 
     # 3. Deaths
     n0  = len(pop)
@@ -549,14 +901,44 @@ for proj_year in range(BASE_YEAR + 1, END_YEAR + 1):
     print(f"  LFPR 25-54: sim={lfpr_pa:.1f}%  bls={_BLS_LFPR_25_54.get(proj_year, float('nan')):.1f}%  "
           f"err={lfpr_pa - _BLS_LFPR_25_54.get(proj_year, lfpr_pa):+.1f}pp")
 
-    # 7b. Assign initial employment to new NILF→LF entrants (steady-state draw)
-    pop = assign_new_lf_employment(pop, new_lf_mask, mccall_params, proj_year, RNG)
+    # 7b. Career-start PED draw for first-ever LF entrants (ped_initialized == 0)
+    new_career_mask = new_lf_mask & (pop["ped_initialized"].values == 0)
+    if new_career_mask.any():
+        ped_arr  = pop["ped"].values.copy()
+        init_arr = pop["ped_initialized"].values.copy()
+        for sv in [1, 2]:
+            for ev in ["hs", "some_college", "ba_plus"]:
+                m = new_career_mask & (pop["sex"].values == sv) & (pop["educ"].values == ev)
+                if m.sum() > 0:
+                    pool = ped_donors.get((sv, ev), ped_donors.get((sv, "hs"), np.array([0.0])))
+                    ped_arr[m]  = RNG.choice(pool, size=m.sum(), replace=True)
+                    init_arr[m] = 1
+        pop["ped"]             = ped_arr
+        pop["ped_initialized"] = init_arr
+
+    # 7c. Assign initial employment to new NILF→LF entrants (steady-state draw)
+    #     McCall wage scaled by exp(PED) so high-PED entrants earn appropriately
+    pop = assign_new_lf_employment(pop, new_lf_mask, mccall_params, proj_year, RNG,
+                                   ped_vec=pop["ped"].values)
 
     # 8. Employment transitions (McCall) — separation + job-finding for existing LF
-    pop = apply_employment(pop, proj_year, mccall_params, _wage_factors, RNG)
+    #    Offered wages scaled by exp(PED_i) to reflect individual permanent quality
+    pop = apply_employment(pop, proj_year, mccall_params, _wage_factors, RNG,
+                           ped_vec=pop["ped"].values)
 
     # 8b. Post-calibrate prime-age (25-54) unemployment by education to BLS targets
     pop = _calibrate_unemp_to_bls(pop, proj_year, mccall_params, _wage_factors)
+
+    # 8c. CBOLT earnings update — apply permanent/transitory shocks, AWI level-match
+    #     PED (e_i) is fixed; only perm_shock (p_it) accumulates each year
+    pop = update_wages_cbolt(pop, wage_model, proj_year)
+    workers_cbolt = (pop["employed"] == "yes") & (pop["age"] > 18)
+    if workers_cbolt.any():
+        w_wages = pop.loc[workers_cbolt, "incwage"].values
+        w_wts   = pop.loc[workers_cbolt, "perwt"].values
+        mean_w  = np.average(w_wages, weights=w_wts)
+        awi_t   = _AWI.get(proj_year, _AWI_BASE * (1.035 ** (proj_year - BASE_YEAR)))
+        print(f"  CBOLT wages: mean={mean_w:,.0f}  AWI={awi_t:,.0f}  err={mean_w/awi_t-1:+.3f}")
 
     in_lf    = pop["labforce"] == "yes"
     employed = pop["employed"] == "yes"
@@ -564,17 +946,25 @@ for proj_year in range(BASE_YEAR + 1, END_YEAR + 1):
     urate    = (pop.loc[in_lf & ~employed, "perwt"].sum() / wt_lf * 100) if wt_lf > 0 else np.nan
     print(f"  Unemployment rate (overall LF): {urate:.1f}%")
 
+    # 8d. Wage distribution stats (Gini top-coded at tax max)
+    ds = _dist_stats(pop, proj_year)
+    if ds:
+        print(f"  Gini(TC) {ds['gini_tc']:.3f}  "
+              f"Pct>Max sim={ds['pct_over_max']:.1f}% ssa={ds['pct_over_ssa']:.1f}%  "
+              f"TP sim={ds['tp_ratio']:.3f} ssa={ds['tp_ratio_ssa']:.3f}")
+
     # 9. Validate
     ssa_yr = ssa_all[ssa_all["Year"] == proj_year]
     # Save microdata for this year
     out_cols = ["famunit","perwt","hhwt","marst","age","school","sex","educ",
                 "labforce","employed","retired","incwage","receive_ss","cohort",
-                "relate","year","ped","aime","predict_hat"]
+                "relate","year","ped","perm_shock","ped_initialized","aime","predict_hat"]
     out_cols = [c for c in out_cols if c in pop.columns]
     pop[out_cols].to_csv(f"{BASE_DIR}/Data_Output/projected_{proj_year}.csv", index=False)
 
     if not ssa_yr.empty:
         row = _validate(pop, ssa_yr, proj_year)
+        row.update(ds)
         results.append(row)
         print(f"  pop  sim={row['pop_sim']:.1f}M  ssa={row['pop_ssa']:.1f}M  "
               f"err={row['pop_sim']-row['pop_ssa']:+.1f}M")
@@ -599,22 +989,31 @@ if results:
     df_res["pop_err"]  = df_res["pop_sim"]  - df_res["pop_ssa"]
     df_res["lfpr_err"] = df_res["lfpr_sim"] - df_res["lfpr_bls"]
 
-    print("\n" + "="*115)
+    print("\n" + "="*130)
     print(f"{'Year':>4}  "
-          f"{'Pop sim':>7} {'Pop ssa':>7} {'err':>5}  "
-          f"{'CBR sim':>7} {'CBR ssa':>7} {'err':>5}  "
-          f"{'%Mar sim':>8} {'%Mar ssa':>8} {'err':>6}  "
-          f"{'DepR sim':>8} {'DepR ssa':>8} {'err':>6}  "
-          f"{'LFPR sim':>8} {'LFPR bls':>8} {'err':>6}")
-    print("-"*115)
+          f"{'Pop sim':>7} {'err':>5}  "
+          f"{'CBR sim':>7} {'err':>5}  "
+          f"{'DepR sim':>8} {'err':>6}  "
+          f"{'LFPR sim':>8} {'err':>6}  "
+          f"{'Gini(TC)':>8}  "
+          f"{'Pct>Max':>7} {'ssa':>5}  "
+          f"{'TP_sim':>6} {'TP_ssa':>6}")
+    print("-"*130)
     for _, r in df_res.iterrows():
+        gini_s = f"{r['gini_tc']:.3f}" if "gini_tc" in r and not pd.isna(r.get("gini_tc", np.nan)) else "  n/a"
+        pom_s  = f"{r['pct_over_max']:.1f}%" if "pct_over_max" in r else "  n/a"
+        posa_s = f"{r['pct_over_ssa']:.1f}%" if "pct_over_ssa" in r else "  n/a"
+        tp_s   = f"{r['tp_ratio']:.3f}" if "tp_ratio" in r and not pd.isna(r.get("tp_ratio", np.nan)) else " n/a"
+        tpa_s  = f"{r['tp_ratio_ssa']:.3f}" if "tp_ratio_ssa" in r and not pd.isna(r.get("tp_ratio_ssa", np.nan)) else " n/a"
         print(f"{int(r['year']):>4}  "
-              f"{r['pop_sim']:>7.1f} {r['pop_ssa']:>7.1f} {r['pop_err']:>+5.1f}  "
-              f"{r['cbr_sim']:>7.2f} {r['cbr_ssa']:>7.2f} {r['cbr_err']:>+5.2f}  "
-              f"{r['mar_sim']:>8.4f} {r['mar_ssa']:>8.4f} {r['mar_err']:>+6.4f}  "
-              f"{r['dep_sim']:>8.4f} {r['dep_ssa']:>8.4f} {r['dep_err']:>+6.4f}  "
-              f"{r['lfpr_sim']:>8.1f} {r['lfpr_bls']:>8.1f} {r['lfpr_err']:>+6.1f}")
-    print("="*115)
+              f"{r['pop_sim']:>7.1f} {r['pop_err']:>+5.1f}  "
+              f"{r['cbr_sim']:>7.2f} {r['cbr_err']:>+5.2f}  "
+              f"{r['dep_sim']:>8.4f} {r['dep_err']:>+6.4f}  "
+              f"{r['lfpr_sim']:>8.1f} {r['lfpr_err']:>+6.1f}  "
+              f"{gini_s:>8}  "
+              f"{pom_s:>7} {posa_s:>5}  "
+              f"{tp_s:>6} {tpa_s:>6}")
+    print("="*130)
 
     print(f"\nMean absolute errors:")
     print(f"  Population : {df_res['pop_err'].abs().mean():.1f}M")
@@ -623,6 +1022,10 @@ if results:
     print(f"  %Div       : {df_res['div_err'].abs().mean():.4f}")
     print(f"  DepR       : {df_res['dep_err'].abs().mean():.4f}")
     print(f"  LFPR 25-54 : {df_res['lfpr_err'].abs().mean():.2f}pp")
+    if "pct_over_max" in df_res.columns and "pct_over_ssa" in df_res.columns:
+        print(f"  Pct>TaxMax : {(df_res['pct_over_max'] - df_res['pct_over_ssa']).abs().mean():.2f}pp")
+    if "tp_ratio" in df_res.columns and "tp_ratio_ssa" in df_res.columns:
+        print(f"  TP ratio   : {(df_res['tp_ratio'] - df_res['tp_ratio_ssa']).abs().mean():.4f}")
 
     out_path = f"{BASE_DIR}/Data_Output/multi_year_validation.csv"
     df_res.to_csv(out_path, index=False)

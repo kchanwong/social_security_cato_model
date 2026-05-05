@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python Py_file/project_multi_year.py)",
+      "Bash(python -c ' *)",
+      "Bash(findstr /R \"CBOLT\\\\|PED init\\\\|===\")",
+      "Bash(Select-String \"CBOLT|PED init|===\")",
+      "Bash(findstr /R \"^==\\\\|^20\\\\|^Year\\\\|Pct>Max\\\\|TP ratio\\\\|Gini\\\\|CBOLT\\\\|AWI\\\\|Mean abs\")",
+      "Bash(findstr \"CBOLT Gini Pct Year 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 Mean TP PED\")",
+      "Bash(findstr \"CBOLT Gini Pct Year 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 Mean TP PED initialized\")",
+      "Bash(findstr \"CBOLT Gini Pct Year 2009 2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 Mean TP PED p90\")"
+    ]
+  }
+}
