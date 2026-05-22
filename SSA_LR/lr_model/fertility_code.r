@@ -192,7 +192,7 @@ library(HMDHFDplus)
 library(ggplot2)
 asfr_period <- readHFDweb("USA", "asfrVH",   # period ASFR
                             username = "kchanwong@cato.org",
-                            password = "Must@ng5!") 
+                            password = "YOU_CANT_SEE_THIS") 
 ASFR <- as_tibble(asfr_period) %>% 
     na.omit() %>% 
     mutate(YEAR_ALIVE = Cohort + Age) %>%
